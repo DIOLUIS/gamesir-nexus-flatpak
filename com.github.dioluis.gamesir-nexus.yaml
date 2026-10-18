@@ -7,13 +7,24 @@ finish-args:
   - --device=all
   - --share=ipc
   - --socket=x11
+  - --socket=wayland
+build-options:
+  # Sintaxe oficial corrigida para liberar o barramento de rede durante o processo de build do pip
+  build-args:
+    - --share=network
 modules:
-  - name: gamesir-nexus
+  - name: python3-pyside6
     buildsystem: simple
     build-commands:
-      # Cria a pasta de binários e copia o utilitário principal
+      # Baixa e instala o Qt de forma isolada dentro da árvore do Flatpak
+      - pip3 install --target=/app/lib/python3.11/site-packages shiboken6 PySide6
+  - name: gamesir-nexus
+    buildsystem: simple
+    sources:
+      - type: dir
+        path: .
+    build-commands:
       - mkdir -p /app/bin
       - cp gamesir-nexus.py /app/bin/gamesir-nexus
       - chmod +x /app/bin/gamesir-nexus
-      # Copia o perfil padrão de fábrica para dentro do ambiente do app
       - cp profile_default.json /app/bin/profile_default.json
