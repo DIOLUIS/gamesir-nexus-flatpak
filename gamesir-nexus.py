@@ -1,16 +1,44 @@
 #!/usr/bin/env python3
 import os
+import json
 import struct
 import sys
 
 class GameSirCyclone2:
-    def __init__(self):
+    def __init__(self, profile_path="profile_default.json"):
+        self.profile_path = profile_path
+        # Valores padrão de fallback caso o JSON falhe
         self.DEADZONE_L_X = 4000
         self.DEADZONE_L_Y = 2000
         self.DEADZONE_R_X = 3000
         self.DEADZONE_R_Y = 3000
+        self.mappings = {}
+        
+        self.load_profile()
+
+    def load_profile(self):
+        """Carrega dinamicamente as configurações de zona morta e mapeamento do JSON"""
+        if not os.path.exists(self.profile_path):
+            print(f"[*] Perfil {self.profile_path} não encontrado. Usando padrões do kernel.")
+            return
+            
+        try:
+            with open(self.profile_path, 'r') as f:
+                data = json.load(f)
+                
+            dz = data.get("deadzones", {})
+            self.DEADZONE_L_X = dz.get("left_analog_x", 4000)
+            self.DEADZONE_L_Y = dz.get("left_analog_y", 2000)
+            self.DEADZONE_R_X = dz.get("right_analog_x", 3000)
+            self.DEADZONE_R_Y = dz.get("right_analog_y", 3000)
+            self.mappings = data.get("mappings", {})
+            
+            print(f"[O] Perfil '{data.get('profile_name', 'Sem Nome')}' carregado com sucesso!")
+        except Exception as e:
+            print(f"[X] Erro ao processar arquivo de perfil: {e}")
 
     def apply_deadzone(self, raw_value, deadzone):
+        """Filtra as oscilações e estabiliza o analógico no centro (zero)"""
         if abs(raw_value) < deadzone:
             return 0
         if raw_value > 0:
@@ -21,7 +49,7 @@ class GameSirCyclone2:
 def main():
     print("=========================================")
     print("   GameSir Cyclone 2 - Utilitário Linux  ")
-    print("     Monitoramento de Eixos e Botões     ")
+    print("       Carregamento Dinâmico de Perfis   ")
     print("=========================================")
     
     device_path = '/dev/input/js0'
@@ -30,8 +58,7 @@ def main():
         sys.exit(1)
         
     controller = GameSirCyclone2()
-    print("[*] Motor híbrido pronto. Teste os botões digitais remanescentes...")
-    print("[*] Pressione Ctrl+C para encerrar o teste.")
+    print("[*] Aguardando inputs do hardware... (Ctrl+C para sair)")
     print("-----------------------------------------")
     
     fn_format = 'IhBB'
@@ -47,30 +74,14 @@ def main():
                 time, value, ev_type, number = struct.unpack(fn_format, event)
                 actual_type = ev_type & ~0x80
                 
-                # 1. PROCESSAMENTO DE BOTÕES DIGITAIS (L1, R1, Select, Start, L3, R3, Home)
-                if actual_type == 1:
-                    status = "Pressionado" if value else "Solto"
-                    print(f"[BOTÃO DIGITAL] Número ID: {number:3d} -> Status: {status}")
-                
-                # 2. PROCESSAMENTO DE EIXOS (Analógicos e D-Pad)
-                elif actual_type == 2:
-                    if number == 0:
-                        f = controller.apply_deadzone(value, controller.DEADZONE_L_X)
-                    elif number == 1:
-                        f = controller.apply_deadzone(value, controller.DEADZONE_L_Y)
-                    elif number == 3:
-                        f = controller.apply_deadzone(value, controller.DEADZONE_R_X)
-                    elif number == 4:
-                        f = controller.apply_deadzone(value, controller.DEADZONE_R_Y)
-                    elif number == 6:
-                        dir_str = "Direita" if value > 0 else ("Esquerda" if value < 0 else "Solto")
-                        print(f"[D-PAD HORIZ.] Valor: {value:6d} -> Direção: {dir_str}")
-                    elif number == 7:
-                        dir_str = "Baixo" if value > 0 else ("Cima" if value < 0 else "Solto")
-                        print(f"[D-PAD VERT. ] Valor: {value:6d} -> Direção: {dir_str}")
+                # Exemplo de uso do mapeamento dinâmico ao pressionar botões digitais
+                if actual_type == 1 and value == 1:
+                    btn_key = f"btn_{number}"
+                    mapped_name = controller.mappings.get(btn_key, f"Desconhecido ({number})")
+                    print(f"[AÇÃO MAPEADA] Botão Físico ID {number} -> Acionou Função: {mapped_name}")
                         
     except KeyboardInterrupt:
-        print("\n[*] Monitoramento finalizado.")
+        print("\n[*] Monitoramento dinâmico finalizado.")
     except PermissionError:
         print("[X] Erro de permissão. Execute com 'sudo python3 gamesir-nexus.py'")
 
