@@ -1,8 +1,8 @@
 # Informações de Hardware - GameSir Cyclone 2
 
-## Perfil de Dispositivo
-O controle GameSir Cyclone 2 é reconhecido no Linux através da seguinte interface de emulação:
+## Perfil de Dispositivo (Conexão via Hub USB)
+Quando conectado por cabo através de um Hub USB no Linux, o controle ativa a seguinte interface:
 
 1. **Interface de Emulação de Jogo (DualShock 4)**
    - **VendorID:ProductID**: `054c:09cc`
-   - **Função**: Emulação de um controle Sony DualShock 4 (CUH-ZCT2x). Esta interface gerencia todos os inputs de eixos (analógicos/gatilhos) e botões nativamente através do driver `hid-sony` do kernel Linux.
+   - **Função**: Emulação padrão de um controle Sony DualShock 4 (CUH-ZCT2x) para compatibilidade nativa com APIs de jogos no ecossistema Linux.
