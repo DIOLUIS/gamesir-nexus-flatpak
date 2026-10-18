@@ -1,0 +1,26 @@
+{
+  "profile_name": "Padrão de Fábrica",
+  "deadzones": {
+    "left_analog_x": 4000,
+    "left_analog_y": 2000,
+    "right_analog_x": 3000,
+    "right_analog_y": 3000
+  },
+  "mappings": {
+    "btn_0": "A",
+    "btn_1": "B",
+    "btn_2": "Y",
+    "btn_3": "X",
+    "btn_4": "L1",
+    "btn_5": "R1",
+    "btn_8": "Select",
+    "btn_9": "Start",
+    "btn_10": "L3",
+    "btn_11": "R3",
+    "btn_12": "Home"
+  },
+  "macros": {
+    "back_button_l": "None",
+    "back_button_r": "None"
+  }
+}
