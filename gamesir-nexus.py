@@ -47,13 +47,13 @@ class AppGUI:
         self.controller = controller
         
         self.root.title("GameSir Cyclone 2 - Painel Linux")
-        self.root.geometry("480x420")
+        self.root.geometry("520x540")
         self.root.configure(bg="#1e1e1e")
         
         # Estilo para os medidores
         self.style = ttk.Style()
         self.style.theme_use('default')
-        self.style.configure("TProgressbar", thickness=15, troughcolor="#2d2d2d", background="#00ff66")
+        self.style.configure("TProgressbar", thickness=12, troughcolor="#2d2d2d", background="#00ff66")
         
         # Rótulo de Cabeçalho
         self.title_label = tk.Label(root, text="GAMESIR NEXUS LINUX", font=("Helvetica", 16, "bold"), fg="#ffffff", bg="#1e1e1e")
@@ -64,24 +64,36 @@ class AppGUI:
         self.profile_label.pack(pady=5)
         
         # Monitor de Interação de Botões
-        self.status_label = tk.Label(root, text="Aguardando input do controle...", font=("Helvetica", 12), fg="#aaaaaa", bg="#2d2d2d", width=35, height=2, relief="groove")
-        self.status_label.pack(pady=15)
+        self.status_label = tk.Label(root, text="Aguardando input do controle...", font=("Helvetica", 12), fg="#aaaaaa", bg="#2d2d2d", width=40, height=2, relief="groove")
+        self.status_label.pack(pady=10)
         
-        # Container para Telemetria dos Analógicos
-        self.analog_frame = tk.LabelFrame(root, text=" Telemetria Efeito Hall (Analógico Esquerdo) ", font=("Helvetica", 10, "bold"), fg="#ffffff", bg="#1e1e1e", padx=10, pady=10)
-        self.analog_frame.pack(pady=10, fill="x", padx=20)
+        # --- PAINEL ANALÓGICO ESQUERDO ---
+        self.frame_left = tk.LabelFrame(root, text=" Efeito Hall - Analógico Esquerdo ", font=("Helvetica", 10, "bold"), fg="#ffffff", bg="#1e1e1e", padx=10, pady=5)
+        self.frame_left.pack(pady=5, fill="x", padx=20)
         
-        # Medidor Eixo X
-        tk.Label(self.analog_frame, text="Eixo X (Horizontal):", fg="#cccccc", bg="#1e1e1e").pack(anchor="w")
-        self.progress_x = ttk.Progressbar(self.analog_frame, orient="horizontal", length=400, mode="determinate", style="TProgressbar")
-        self.progress_x.pack(pady=5)
-        self.progress_x['value'] = 50  # Centralizado por padrão
+        tk.Label(self.frame_left, text="Eixo X (Horizontal):", fg="#cccccc", bg="#1e1e1e", font=("Helvetica", 9)).pack(anchor="w")
+        self.progress_lx = ttk.Progressbar(self.frame_left, orient="horizontal", length=440, mode="determinate", style="TProgressbar")
+        self.progress_lx.pack(pady=3)
+        self.progress_lx['value'] = 50
         
-        # Medidor Eixo Y
-        tk.Label(self.analog_frame, text="Eixo Y (Vertical):", fg="#cccccc", bg="#1e1e1e").pack(anchor="w")
-        self.progress_y = ttk.Progressbar(self.analog_frame, orient="horizontal", length=400, mode="determinate", style="TProgressbar")
-        self.progress_y.pack(pady=5)
-        self.progress_y['value'] = 50  # Centralizado por padrão
+        tk.Label(self.frame_left, text="Eixo Y (Vertical):", fg="#cccccc", bg="#1e1e1e", font=("Helvetica", 9)).pack(anchor="w")
+        self.progress_ly = ttk.Progressbar(self.frame_left, orient="horizontal", length=440, mode="determinate", style="TProgressbar")
+        self.progress_ly.pack(pady=3)
+        self.progress_ly['value'] = 50
+
+        # --- PAINEL ANALÓGICO DIREITO ---
+        self.frame_right = tk.LabelFrame(root, text=" Efeito Hall - Analógico Direito ", font=("Helvetica", 10, "bold"), fg="#ffffff", bg="#1e1e1e", padx=10, pady=5)
+        self.frame_right.pack(pady=5, fill="x", padx=20)
+        
+        tk.Label(self.frame_right, text="Eixo X (Horizontal):", fg="#cccccc", bg="#1e1e1e", font=("Helvetica", 9)).pack(anchor="w")
+        self.progress_rx = ttk.Progressbar(self.frame_right, orient="horizontal", length=440, mode="determinate", style="TProgressbar")
+        self.progress_rx.pack(pady=3)
+        self.progress_rx['value'] = 50
+        
+        tk.Label(self.frame_right, text="Eixo Y (Vertical):", fg="#cccccc", bg="#1e1e1e", font=("Helvetica", 9)).pack(anchor="w")
+        self.progress_ry = ttk.Progressbar(self.frame_right, orient="horizontal", length=440, mode="determinate", style="TProgressbar")
+        self.progress_ry.pack(pady=3)
+        self.progress_ry['value'] = 50
         
         # Nota de rodapé técnica
         self.footer_label = tk.Label(root, text="Filtro ativo contra drift nos Analógicos de Efeito Hall", font=("Helvetica", 9, "italic"), fg="#777777", bg="#1e1e1e")
@@ -91,13 +103,16 @@ class AppGUI:
         self.root.after(0, lambda: self.status_label.config(text=f"Botão Pressionado: {button_name}", fg="#ffffff", bg="#0055ff"))
 
     def update_analog_display(self, axis_id, filtered_value):
-        """Converte a escala do hardware (-32767 a 32767) para a escala gráfica do medidor (0 a 100)"""
-        # Mapeia linearmente: -32767 -> 0% | 0 -> 50% | 32767 -> 100%
+        """Mapeia linearmente: -32767 -> 0% | 0 -> 50% | 32767 -> 100%"""
         percentage = ((filtered_value + 32767) / 65534) * 100
         if axis_id == 0:
-            self.root.after(0, lambda: self.progress_x.config(value=percentage))
+            self.root.after(0, lambda: self.progress_lx.config(value=percentage))
         elif axis_id == 1:
-            self.root.after(0, lambda: self.progress_y.config(value=percentage))
+            self.root.after(0, lambda: self.progress_ly.config(value=percentage))
+        elif axis_id == 3:
+            self.root.after(0, lambda: self.progress_rx.config(value=percentage))
+        elif axis_id == 4:
+            self.root.after(0, lambda: self.progress_ry.config(value=percentage))
 
 def read_hardware(controller, gui):
     device_path = '/dev/input/js0'
@@ -122,7 +137,7 @@ def read_hardware(controller, gui):
                     mapped_name = controller.mappings.get(btn_key, f"ID {number}")
                     gui.update_input_display(mapped_name)
                 
-                # 2. Captura de Eixos com aplicação da Deadzone
+                # 2. Captura de Eixos com Deadzone Dinâmica
                 elif actual_type == 2:
                     if number == 0:
                         f = controller.apply_deadzone(value, controller.DEADZONE_L_X)
@@ -130,6 +145,12 @@ def read_hardware(controller, gui):
                     elif number == 1:
                         f = controller.apply_deadzone(value, controller.DEADZONE_L_Y)
                         gui.update_analog_display(1, f)
+                    elif number == 3:
+                        f = controller.apply_deadzone(value, controller.DEADZONE_R_X)
+                        gui.update_analog_display(3, f)
+                    elif number == 4:
+                        f = controller.apply_deadzone(value, controller.DEADZONE_R_Y)
+                        gui.update_analog_display(4, f)
     except Exception:
         pass
 
