@@ -15,12 +15,27 @@ Quando conectado por cabo através de um Hub USB no Linux, o controle ativa a se
 - **Botão Y**: `ID 2`
 - **Botão X**: `ID 3`
 
+### Bumpers Superiores
+- **Botão L1**: `ID 4`
+- **Botão R1**: `ID 5`
+
 ### Gatilhos Analógicos (L2 / R2)
 - **Gatilho Esquerdo (L2)**: `Eixo ID 2` (Valores de -32767 a 32767) + `Botão ID 6` (Digital)
 - **Gatilho Direito (R2)**: `Eixo ID 5` (Valores de -32767 a 32767) + `Botão ID 7` (Digital)
 
-### Analógico Esquerdo
-- **Eixo Horizontal (X)**: `Eixo ID 0` (Valores de -32767 a 32767)
-- **Eixo Vertical (Y)**: `Eixo ID 1` (Valores de -32767 a 32767)
+### Botões de Sistema e Cliques
+- **Botão Select (Share)**: `ID 8`
+- **Botão Start (Options)**: `ID 9`
+- **Botão L3 (Clique Analógico Esq.)**: `ID 10`
+- **Botão R3 (Clique Analógico Dir.)**: `ID 11`
+- **Botão Home / M (Central)**: `ID 12`
+
+### Analógicos
+- **Analógico Esquerdo (X/Y)**: `Eixo ID 0` e `Eixo ID 1` (Valores de -32767 a 32767)
+- **Analógico Direito (X/Y)**: `Eixo ID 3` e `Eixo ID 4` (Valores de -32767 a 32767)
+
+### D-Pad (Direcional)
+- **Eixo Horizontal (Esquerda/Direita)**: `Eixo ID 6`
+- **Eixo Vertical (Cima/Baixo)**: `Eixo ID 7`
 
 *Nota de Desenvolvimento*: O hardware demonstrou oscilação de resíduo físico de eixo (drift/centralização incorreta de até ~11%) ao retornar ao repouso no Linux, exigindo a implementação de tratamento de zona morta (deadzone) customizada via software dentro do nosso utilitário Flatpak para espelhar a precisão encontrada no Windows.
