@@ -11,4 +11,9 @@ modules:
   - name: gamesir-nexus
     buildsystem: simple
     build-commands:
-      - echo "Arquitetura base configurada"
+      # Cria a pasta de binários e copia o utilitário principal
+      - mkdir -p /app/bin
+      - cp gamesir-nexus.py /app/bin/gamesir-nexus
+      - chmod +x /app/bin/gamesir-nexus
+      # Copia o perfil padrão de fábrica para dentro do ambiente do app
+      - cp profile_default.json /app/bin/profile_default.json
