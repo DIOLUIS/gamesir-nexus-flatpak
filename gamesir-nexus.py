@@ -5,15 +5,16 @@ import sys
 
 class GameSirCyclone2:
     def __init__(self):
-        # Limiares de Zona Morta calculados com base no hardware real
-        self.DEADZONE_X = 4000  # Cobre os desvios de ~3800 observados no Eixo X
-        self.DEADZONE_Y = 2000  # Cobre os desvios de ~1500 observados no Eixo Y
+        # Limiares de Zona Morta para os Analógicos (Esquerdo e Direito)
+        self.DEADZONE_L_X = 4000
+        self.DEADZONE_L_Y = 2000
+        self.DEADZONE_R_X = 3000  # Margem inicial para o Analógico Direito
+        self.DEADZONE_R_Y = 3000
 
     def apply_deadzone(self, raw_value, deadzone):
         """Filtra as oscilações e estabiliza o analógico no centro (zero)"""
         if abs(raw_value) < deadzone:
             return 0
-        # Normalização para garantir aceleração suave fora da zona morta
         if raw_value > 0:
             return int(((raw_value - deadzone) / (32767 - deadzone)) * 32767)
         else:
@@ -22,7 +23,7 @@ class GameSirCyclone2:
 def main():
     print("=========================================")
     print("   GameSir Cyclone 2 - Utilitário Linux  ")
-    print("      Teste de Filtragem de Deadzone     ")
+    print("      Monitoramento Completo de Eixos    ")
     print("=========================================")
     
     device_path = '/dev/input/js0'
@@ -31,11 +32,10 @@ def main():
         sys.exit(1)
         
     controller = GameSirCyclone2()
-    print("[*] Motor de calibração pronto. Movimente o Analógico Esquerdo...")
+    print("[*] Motor completo pronto. Movimente os Analógicos ou o D-Pad...")
     print("[*] Pressione Ctrl+C para encerrar o teste.")
     print("-----------------------------------------")
     
-    # Estrutura Joydev do Linux
     fn_format = 'IhBB'
     event_size = struct.calcsize(fn_format)
     
@@ -49,17 +49,33 @@ def main():
                 time, value, ev_type, number = struct.unpack(fn_format, event)
                 actual_type = ev_type & ~0x80
                 
-                # Monitora apenas os eixos do Analógico Esquerdo (0 e 1)
-                if actual_type == 2 and number in (0, 1):
+                if actual_type == 2: # Tipo Eixo
+                    # Analógico Esquerdo
                     if number == 0:
-                        filtered = controller.apply_deadzone(value, controller.DEADZONE_X)
-                        print(f"[EIXO X] Bruto: {value:6d} -> Filtrado (Com Deadzone): {filtered:6d}")
+                        f = controller.apply_deadzone(value, controller.DEADZONE_L_X)
+                        print(f"[ANALOG. ESQ X] Bruto: {value:6d} -> Filtrado: {f:6d}")
                     elif number == 1:
-                        filtered = controller.apply_deadzone(value, controller.DEADZONE_Y)
-                        print(f"[EIXO Y] Bruto: {value:6d} -> Filtrado (Com Deadzone): {filtered:6d}")
+                        f = controller.apply_deadzone(value, controller.DEADZONE_L_Y)
+                        print(f"[ANALOG. ESQ Y] Bruto: {value:6d} -> Filtrado: {f:6d}")
+                    
+                    # Analógico Direito
+                    elif number == 3:
+                        f = controller.apply_deadzone(value, controller.DEADZONE_R_X)
+                        print(f"[ANALOG. DIR X] Bruto: {value:6d} -> Filtrado: {f:6d}")
+                    elif number == 4:
+                        f = controller.apply_deadzone(value, controller.DEADZONE_R_Y)
+                        print(f"[ANALOG. DIR Y] Bruto: {value:6d} -> Filtrado: {f:6d}")
+                    
+                    # D-Pad (Direcional)
+                    elif number == 6:
+                        dir_str = "Direita" if value > 0 else ("Esquerda" if value < 0 else "Solto")
+                        print(f"[D-PAD HORIZ.] Valor: {value:6d} -> Direção: {dir_str}")
+                    elif number == 7:
+                        dir_str = "Baixo" if value > 0 else ("Cima" if value < 0 else "Solto")
+                        print(f"[D-PAD VERT. ] Valor: {value:6d} -> Direção: {dir_str}")
                         
     except KeyboardInterrupt:
-        print("\n[*] Teste de leitura contínua finalizado.")
+        print("\n[*] Monitoramento finalizado.")
     except PermissionError:
         print("[X] Erro de permissão. Execute com 'sudo python3 gamesir-nexus.py'")
 
