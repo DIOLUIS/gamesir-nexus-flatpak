@@ -1,0 +1,14 @@
+id: com.github.dioluis.gamesir-nexus
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: gamesir-nexus
+finish-args:
+  - --device=all
+  - --share=ipc
+  - --socket=x11
+modules:
+  - name: gamesir-nexus
+    buildsystem: simple
+    build-commands:
+      - echo "Arquitetura base configurada"
