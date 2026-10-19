@@ -1,9 +1,15 @@
 #!/usr/bin/env python3
-import os, json, struct, sys
+import os, json, struct, sys, glob
 sys.path.append('/app/lib/python3.11/site-packages')
 from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QVBoxLayout, 
-                               QWidget, QProgressBar, QGroupBox, QTabWidget, QPushButton, QHBoxLayout)
+                               QWidget, QProgressBar, QGroupBox, QTabWidget, QPushButton, QSlider)
 from PySide6.QtCore import Qt, QTimer
+
+try:
+    from evdev import InputDevice, ecodes, ff
+    EVDEV_AVAILABLE = True
+except ImportError:
+    EVDEV_AVAILABLE = False
 
 class GameSirCyclone2:
     def __init__(self, profile_path="profile_default.json"):
@@ -42,12 +48,14 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.controller = controller
         self.setWindowTitle("GameSir Nexus - Painel de Controlo")
-        self.resize(600, 550)
+        self.resize(600, 570)
         self.setStyleSheet("""
             QMainWindow { background-color: #1e1e1e; color: #ffffff; }
             QTabWidget::pane { border: 1px solid #444; border-radius: 4px; }
             QTabBar::tab { background: #2d2d2d; color: #aaa; padding: 10px 20px; border: 1px solid #444; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; }
             QTabBar::tab:selected { background: #0055ff; color: white; font-weight: bold; }
+            QSlider::groove:horizontal { border: 1px solid #444; height: 8px; background: #2d2d2d; border-radius: 4px; }
+            QSlider::handle:horizontal { background: #00ff66; width: 18px; margin: -5px 0; border-radius: 9px; }
         """)
         
         central_widget = QWidget()
@@ -64,7 +72,6 @@ class MainWindow(QMainWindow):
         self.profile_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(self.profile_label)
 
-        # Sistema de Abas (Tabs)
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
 
@@ -75,6 +82,8 @@ class MainWindow(QMainWindow):
 
         self.last_pct = {0: 50, 1: 50, 3: 50, 4: 50}
         self.fd = None
+        self.ff_device = None  # <-- Nova variável persistente para não matar a vibração!
+        
         self.init_hardware()
 
         self.timer = QTimer(self)
@@ -84,7 +93,6 @@ class MainWindow(QMainWindow):
     def setup_tab_diagnostico(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        
         self.status_label = QLabel("Aguardando input do controle...")
         self.status_label.setStyleSheet("color: #aaaaaa; background-color: #2d2d2d; padding: 15px; border-radius: 4px; font-weight: bold;")
         self.status_label.setAlignment(Qt.AlignCenter)
@@ -111,7 +119,6 @@ class MainWindow(QMainWindow):
         layout_r.addWidget(QLabel("Eixo X (Horizontal):")); layout_r.addWidget(self.bar_rx)
         layout_r.addWidget(QLabel("Eixo Y (Vertical):")); layout_r.addWidget(self.bar_ry)
         layout.addWidget(group_r)
-        
         self.tabs.addTab(tab, "Diagnóstico")
 
     def setup_tab_iluminacao(self):
@@ -126,10 +133,47 @@ class MainWindow(QMainWindow):
     def setup_tab_vibracao(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        info = QLabel("Controlo dos Motores de Vibração (Punhos e Gatilhos)\n\n(A aguardar implementação evdev/ff)")
-        info.setAlignment(Qt.AlignCenter)
-        info.setStyleSheet("color: #aaaaaa; font-size: 14px;")
-        layout.addWidget(info)
+        
+        self.vib_status_label = QLabel("Arraste os sliders para a direita e clique em Testar.")
+        self.vib_status_label.setStyleSheet("color: #aaaaaa; background-color: #2d2d2d; padding: 10px; border-radius: 4px; font-weight: bold;")
+        self.vib_status_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.vib_status_label)
+
+        group_main = QGroupBox(" Motores Principais (Punhos) ")
+        group_main.setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #444; border-radius: 6px; margin-top: 10px; padding: 10px; }")
+        layout_main = QVBoxLayout(group_main)
+        
+        self.slider_left_motor = QSlider(Qt.Horizontal)
+        self.slider_left_motor.setRange(0, 100); self.slider_left_motor.setValue(50)
+        layout_main.addWidget(QLabel("Motor Esquerdo (Pesado/Forte):"))
+        layout_main.addWidget(self.slider_left_motor)
+        
+        self.slider_right_motor = QSlider(Qt.Horizontal)
+        self.slider_right_motor.setRange(0, 100); self.slider_right_motor.setValue(50)
+        layout_main.addWidget(QLabel("Motor Direito (Leve/Rápido):"))
+        layout_main.addWidget(self.slider_right_motor)
+        layout.addWidget(group_main)
+
+        group_trig = QGroupBox(" Motores dos Gatilhos (Impulse Triggers) ")
+        group_trig.setStyleSheet("QGroupBox { font-weight: bold; border: 1px solid #444; border-radius: 6px; margin-top: 10px; padding: 10px; }")
+        layout_trig = QVBoxLayout(group_trig)
+        
+        self.slider_l2 = QSlider(Qt.Horizontal)
+        self.slider_l2.setRange(0, 100); self.slider_l2.setValue(50)
+        layout_trig.addWidget(QLabel("Gatilho L2 (Em desenvolvimento):"))
+        layout_trig.addWidget(self.slider_l2)
+        
+        self.slider_r2 = QSlider(Qt.Horizontal)
+        self.slider_r2.setRange(0, 100); self.slider_r2.setValue(50)
+        layout_trig.addWidget(QLabel("Gatilho R2 (Em desenvolvimento):"))
+        layout_trig.addWidget(self.slider_r2)
+        layout.addWidget(group_trig)
+
+        self.btn_test_vib = QPushButton("Testar Motores de Vibração (1s)")
+        self.btn_test_vib.setStyleSheet("QPushButton { background-color: #0055ff; color: white; padding: 12px; font-weight: bold; border-radius: 4px; margin-top: 15px; } QPushButton:hover { background-color: #0066ff; }")
+        self.btn_test_vib.clicked.connect(self.test_vibration)
+        layout.addWidget(self.btn_test_vib)
+
         self.tabs.addTab(tab, "Vibração")
 
     def setup_tab_mapeamento(self):
@@ -140,6 +184,49 @@ class MainWindow(QMainWindow):
         info.setStyleSheet("color: #aaaaaa; font-size: 14px;")
         layout.addWidget(info)
         self.tabs.addTab(tab, "Mapeamento")
+
+    def test_vibration(self):
+        if not EVDEV_AVAILABLE:
+            self.vib_status_label.setText("Erro: evdev não foi instalado corretamente pelo pip.")
+            self.vib_status_label.setStyleSheet("color: #ff4444; background-color: #2d2d2d; padding: 10px;")
+            return
+
+        # Se ainda não abrimos o dispositivo, procuramos e guardamos na classe
+        if not self.ff_device:
+            for path in glob.glob('/dev/input/event*'):
+                try:
+                    dev = InputDevice(path)
+                    if ecodes.EV_FF in dev.capabilities():
+                        self.ff_device = dev
+                        break
+                except PermissionError: continue
+                except: continue
+
+        if not self.ff_device:
+            self.vib_status_label.setText("Erro: Controle com Force Feedback (vibração) não encontrado.")
+            self.vib_status_label.setStyleSheet("color: #ff4444; background-color: #2d2d2d; padding: 10px;")
+            return
+
+        try:
+            strong_mag = int((self.slider_left_motor.value() / 100) * 65535)
+            weak_mag = int((self.slider_right_motor.value() / 100) * 65535)
+            
+            rumble = ff.Rumble(strong_magnitude=strong_mag, weak_magnitude=weak_mag)
+            effect = ff.Effect(
+                ecodes.FF_RUMBLE, -1, 0,
+                ff.Trigger(0, 0),
+                ff.Replay(1000, 0), # 1000ms
+                ff.EffectType(ff_rumble_effect=rumble)
+            )
+            
+            effect_id = self.ff_device.upload_effect(effect)
+            self.ff_device.write(ecodes.EV_FF, effect_id, 1)
+            self.vib_status_label.setText(f"Vibração Enviada! Esq={self.slider_left_motor.value()}% Dir={self.slider_right_motor.value()}%")
+            self.vib_status_label.setStyleSheet("color: #00ff66; background-color: #2d2d2d; padding: 10px;")
+        except Exception as e:
+            self.vib_status_label.setText(f"Falha ao vibrar: {str(e)}")
+            self.vib_status_label.setStyleSheet("color: #ff4444; background-color: #2d2d2d; padding: 10px;")
+            self.ff_device = None # Reseta a conexão caso o erro seja de hardware desligado
 
     def init_hardware(self):
         paths = ['/dev/input/js0', '/dev/input/js1', '/dev/input/js2']

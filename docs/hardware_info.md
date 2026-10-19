@@ -47,3 +47,8 @@ Quando conectado por cabo através de um Hub USB no Linux, o controle ativa a se
 ## Solução Definitiva de Concorrência (Game Loop a 60 FPS)
 - **QTimer e Polling**: A arquitetura assíncrona baseada em eventos diretos sobrecarregava o motor C++ do PySide6 (Shiboken) devido à altíssima frequência dos sensores de Efeito Hall, gerando o erro fatal `none_dealloc`. A solução final adota um modelo de Game Loop com Polling a 60 FPS (16ms) via `QTimer`.
 - **Esvaziamento de Buffer Otimizado**: O arquivo de hardware em `/dev/input/js*` é lido em modo não-bloqueante e a fila de eventos acumulados no kernel é esvaziada inteiramente a cada frame. A interface gráfica é notificada e renderizada apenas uma vez por ciclo, garantindo 100% de estabilidade visual na leitura dos botões e barras analógicas[cite: 1].
+
+## Force Feedback (Vibração)
+- **Implementação via evdev**: O controlo dos motores principais (punhos) e dos gatilhos foi estabelecido com sucesso através do protocolo nativo do Linux (`evdev`).
+- **Conexão Persistente**: A ligação ao `/dev/input/event*` que suporta `FF_RUMBLE` é mantida de forma persistente na classe principal (via `self.ff_device`) para evitar que o kernel do Linux cancele o efeito de vibração prematuramente.
+- **Requisito de Hardware**: A vibração e a configuração avançada na memória requerem que o comando esteja ligado por **cabo USB**, uma vez que o *dongle* wireless (driver genérico) não expõe o endpoint de Force Feedback bidirecional.
