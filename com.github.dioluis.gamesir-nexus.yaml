@@ -1,30 +1,36 @@
-id: com.github.dioluis.gamesir-nexus
+app-id: com.github.dioluis.gamesir-nexus
 runtime: org.freedesktop.Platform
 runtime-version: '23.08'
 sdk: org.freedesktop.Sdk
 command: gamesir-nexus
+
 finish-args:
-  - --device=all
   - --share=ipc
-  - --socket=x11
   - --socket=wayland
+  - --socket=fallback-x11
+  - --device=all
+  - --env=QT_QPA_PLATFORM=wayland;xcb
+
 build-options:
-  # Sintaxe oficial corrigida para liberar o barramento de rede durante o processo de build do pip
+  env:
+    PYTHONDONTWRITEBYTECODE: "1"
   build-args:
     - --share=network
+
 modules:
-  - name: python3-pyside6
-    buildsystem: simple
-    build-commands:
-      # Baixa e instala o Qt de forma isolada dentro da árvore do Flatpak
-      - pip3 install --target=/app/lib/python3.11/site-packages shiboken6 PySide6
+  - name: xcb-util-cursor
+    buildsystem: autotools
+    sources:
+      - type: archive
+        url: https://xorg.freedesktop.org/archive/individual/lib/xcb-util-cursor-0.1.4.tar.gz
+        sha256: cc8608ebb695742b6cf84712be29b2b66aa5f6768039528794fca0fa283022bf
+
   - name: gamesir-nexus
     buildsystem: simple
-    sources:
-      - type: dir
-        path: .
     build-commands:
-      - mkdir -p /app/bin
-      - cp gamesir-nexus.py /app/bin/gamesir-nexus
+      - pip3 install --prefix=/app PySide6
+      - install -D gamesir-nexus.py /app/bin/gamesir-nexus
       - chmod +x /app/bin/gamesir-nexus
-      - cp profile_default.json /app/bin/profile_default.json
+    sources:
+      - type: file
+        path: gamesir-nexus.py
