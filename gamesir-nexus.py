@@ -4,7 +4,7 @@ sys.path.append('/app/lib/python3.11/site-packages')
 from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QVBoxLayout, 
                                QWidget, QProgressBar, QGroupBox, QTabWidget, QPushButton, 
                                QSlider, QHBoxLayout, QTextEdit, QFormLayout, QSpinBox, 
-                               QColorDialog)
+                               QColorDialog, QComboBox)
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 
@@ -20,6 +20,22 @@ try:
 except ImportError:
     HID_AVAILABLE = False
 
+BUTTON_NAMES = {
+    0: "A / Cruz (ID 0)",
+    1: "B / Círculo (ID 1)",
+    2: "X / Quadrado (ID 2)",
+    3: "Y / Triângulo (ID 3)",
+    4: "LB / L1 (ID 4)",
+    5: "RB / R1 (ID 5)",
+    6: "LT / L2 (ID 6)",
+    7: "RT / R2 (ID 7)",
+    8: "Select / Share (ID 8)",
+    9: "Start / Options (ID 9)",
+    10: "L3 / Thumb L (ID 10)",
+    11: "R3 / Thumb R (ID 11)",
+    12: "Home / Guide (ID 12)"
+}
+
 class GameSirCyclone2:
     def __init__(self, profile_path="profile_default.json"):
         self.profile_path = profile_path
@@ -30,7 +46,10 @@ class GameSirCyclone2:
         self.led_r = 0
         self.led_g = 255
         self.led_b = 128
-        self.mappings = {}
+        self.mappings = {
+            "m1_button_id": 3,
+            "m2_button_id": 1
+        }
         self.profile_name = "Padrão de Fábrica"
         self.load_profile()
 
@@ -56,7 +75,10 @@ class GameSirCyclone2:
                     self.led_g = led.get("g", 255)
                     self.led_b = led.get("b", 128)
                     
-                    self.mappings = data.get("mappings", {})
+                    mp = data.get("mappings", {})
+                    self.mappings["m1_button_id"] = mp.get("m1_button_id", 3)
+                    self.mappings["m2_button_id"] = mp.get("m2_button_id", 1)
+                    
                     self.profile_name = data.get("profile_name", "Padrão de Fábrica")
                     return
                 except Exception:
@@ -101,7 +123,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.controller = controller
         self.setWindowTitle("GameSir Nexus - Painel de Controlo Avançado")
-        self.resize(780, 720)
+        self.resize(780, 740)
         self.setStyleSheet("""
             QMainWindow { background-color: #1e1e1e; color: #ffffff; }
             QTabWidget::pane { border: 1px solid #444; border-radius: 4px; }
@@ -110,13 +132,15 @@ class MainWindow(QMainWindow):
             QSlider::groove:horizontal { border: 1px solid #444; height: 8px; background: #2d2d2d; border-radius: 4px; }
             QSlider::handle:horizontal { background: #00ff66; width: 18px; margin: -5px 0; border-radius: 9px; }
             QTextEdit { background-color: #000000; color: #00ff66; border: 1px solid #444; font-family: monospace; }
+            QComboBox { background-color: #2d2d2d; color: white; border: 1px solid #444; padding: 6px; border-radius: 4px; }
+            QComboBox QAbstractItemView { background-color: #2d2d2d; color: white; selection-background-color: #0055ff; }
         """)
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         
-        self.connection_banner = QLabel("Protocolo Validado: GameSir Cyclone 2 (Modo USB Output Report)")
+        self.connection_banner = QLabel("Protocolo Validado: GameSir Cyclone 2 (Pás M1 / M2 Ativas)")
         self.connection_banner.setStyleSheet("color: #00ff66; background-color: #1a3322; padding: 10px; border-radius: 4px; font-weight: bold;")
         self.connection_banner.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(self.connection_banner)
@@ -135,7 +159,7 @@ class MainWindow(QMainWindow):
         self.evdev_path = None
         self.active_effect_id = None
         
-        self.add_log("Sistema iniciado com protocolo de iluminação consolidado.")
+        self.add_log("Sistema iniciado com suporte a telemetria e botões traseiros M1/M2.")
         self.init_hardware()
 
         self.send_controller_led(self.controller.led_r, self.controller.led_g, self.controller.led_b)
@@ -325,7 +349,10 @@ class MainWindow(QMainWindow):
     def setup_tab_mapeamento(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
-        form_layout = QFormLayout()
+        
+        # Secção de Perfil e Deadzones
+        group_dz = QGroupBox(" Calibração e Deadzones ")
+        form_layout = QFormLayout(group_dz)
         self.lbl_profile = QLabel(self.controller.profile_name)
         self.lbl_profile.setStyleSheet("color: #00ff66; font-weight: bold;")
         form_layout.addRow("Perfil Ativo:", self.lbl_profile)
@@ -335,12 +362,53 @@ class MainWindow(QMainWindow):
         self.spin_dz_lx.setValue(self.controller.DEADZONE_L_X)
         self.spin_dz_lx.valueChanged.connect(lambda v: setattr(self.controller, 'DEADZONE_L_X', v))
         form_layout.addRow("Deadzone Analógico Esq (X):", self.spin_dz_lx)
-        layout.addLayout(form_layout)
+        layout.addWidget(group_dz)
+
+        # Secção de Pás Traseiras M1 e M2
+        group_rear = QGroupBox(" Botões Traseiros (M1 / M2) ")
+        rear_layout = QVBoxLayout(group_rear)
         
-        btn_save = QPushButton("Gravar Perfil em JSON")
+        # Indicadores Visuais de Pressão em Tempo Real
+        live_layout = QHBoxLayout()
+        self.lbl_m1_state = QLabel("M1 (Esq): SOLTO")
+        self.lbl_m1_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 10px; border-radius: 4px; font-weight: bold; text-align: center;")
+        self.lbl_m1_state.setAlignment(Qt.AlignCenter)
+        
+        self.lbl_m2_state = QLabel("M2 (Dir): SOLTO")
+        self.lbl_m2_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 10px; border-radius: 4px; font-weight: bold; text-align: center;")
+        self.lbl_m2_state.setAlignment(Qt.AlignCenter)
+        
+        live_layout.addWidget(self.lbl_m1_state)
+        live_layout.addWidget(self.lbl_m2_state)
+        rear_layout.addLayout(live_layout)
+
+        # Seletores de Mapeamento do Perfil
+        map_form = QFormLayout()
+        self.combo_m1 = QComboBox()
+        self.combo_m2 = QComboBox()
+        for bid, bname in BUTTON_NAMES.items():
+            self.combo_m1.addItem(bname, bid)
+            self.combo_m2.addItem(bname, bid)
+            
+        idx_m1 = self.combo_m1.findData(self.controller.mappings.get("m1_button_id", 3))
+        if idx_m1 >= 0: self.combo_m1.setCurrentIndex(idx_m1)
+        idx_m2 = self.combo_m2.findData(self.controller.mappings.get("m2_button_id", 1))
+        if idx_m2 >= 0: self.combo_m2.setCurrentIndex(idx_m2)
+        
+        self.combo_m1.currentIndexChanged.connect(lambda: self.controller.mappings.update({"m1_button_id": self.combo_m1.currentData()}))
+        self.combo_m2.currentIndexChanged.connect(lambda: self.controller.mappings.update({"m2_button_id": self.combo_m2.currentData()}))
+
+        map_form.addRow("Atribuição M1 (Mão Esquerda):", self.combo_m1)
+        map_form.addRow("Atribuição M2 (Mão Direita):", self.combo_m2)
+        rear_layout.addLayout(map_form)
+        
+        layout.addWidget(group_rear)
+        
+        btn_save = QPushButton("Gravar Perfil Completo em JSON")
         btn_save.setStyleSheet("background-color: #00aa55; color: white; font-weight: bold; padding: 12px; border-radius: 4px;")
         btn_save.clicked.connect(lambda: self.add_log("Perfil gravado com sucesso!") if self.controller.save_profile() else self.add_log("[ERRO] Falha ao gravar perfil."))
         layout.addWidget(btn_save)
+        
         self.tabs.addTab(tab, "Mapeamento")
 
     def init_hardware(self):
@@ -387,6 +455,7 @@ class MainWindow(QMainWindow):
                 time_val, value, ev_type, number = struct.unpack(fn_format, event)
                 actual_type = ev_type & ~0x80
                 
+                # Eixos analógicos
                 if actual_type == 2 and number in self.last_pct:
                     dz = self.controller.DEADZONE_L_X if number == 0 else self.controller.DEADZONE_L_Y
                     f = self.controller.apply_deadzone(value, dz)
@@ -394,6 +463,27 @@ class MainWindow(QMainWindow):
                     if self.last_pct[number] != pct:
                         self.last_pct[number] = pct
                         gui_needs_update = True
+                        
+                # Botões (telemetria em tempo real para M1 e M2)
+                elif actual_type == 1:
+                    m1_target = self.controller.mappings.get("m1_button_id", 3)
+                    m2_target = self.controller.mappings.get("m2_button_id", 1)
+                    
+                    if number == m1_target:
+                        if value == 1:
+                            self.lbl_m1_state.setText("M1 (Esq): PRESSIONADO")
+                            self.lbl_m1_state.setStyleSheet("background-color: #00aa55; color: white; padding: 10px; border-radius: 4px; font-weight: bold;")
+                        else:
+                            self.lbl_m1_state.setText("M1 (Esq): SOLTO")
+                            self.lbl_m1_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 10px; border-radius: 4px; font-weight: bold;")
+                            
+                    elif number == m2_target:
+                        if value == 1:
+                            self.lbl_m2_state.setText("M2 (Dir): PRESSIONADO")
+                            self.lbl_m2_state.setStyleSheet("background-color: #0055ff; color: white; padding: 10px; border-radius: 4px; font-weight: bold;")
+                        else:
+                            self.lbl_m2_state.setText("M2 (Dir): SOLTO")
+                            self.lbl_m2_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 10px; border-radius: 4px; font-weight: bold;")
         except Exception:
             pass
             
