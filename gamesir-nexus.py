@@ -21,19 +21,22 @@ except ImportError:
     HID_AVAILABLE = False
 
 BUTTON_NAMES = {
-    0: "A / Cruz (ID 0)",
-    1: "B / Círculo (ID 1)",
-    2: "X / Quadrado (ID 2)",
-    3: "Y / Triângulo (ID 3)",
-    4: "LB / L1 (ID 4)",
-    5: "RB / R1 (ID 5)",
-    6: "LT / L2 (ID 6)",
-    7: "RT / R2 (ID 7)",
-    8: "Select / Share (ID 8)",
-    9: "Start / Options (ID 9)",
-    10: "L3 / Thumb L (ID 10)",
-    11: "R3 / Thumb R (ID 11)",
-    12: "Home / Guide (ID 12)"
+    0: "Botão ID 0 (Cruz / A)",
+    1: "Botão ID 1 (Círculo / B)",
+    2: "Botão ID 2 (Triângulo / X)",
+    3: "Botão ID 3 (Quadrado / Y)",
+    4: "Botão ID 4 (L1 / LB)",
+    5: "Botão ID 5 (R1 / RB)",
+    6: "Botão ID 6 (L2 / LT Digital)",
+    7: "Botão ID 7 (R2 / RT Digital)",
+    8: "Botão ID 8 (Share / Select)",
+    9: "Botão ID 9 (Options / Start)",
+    10: "Botão ID 10 (PS / Home)",
+    11: "Botão ID 11 (L3 / Analógico Esq)",
+    12: "Botão ID 12 (R3 / Analógico Dir)",
+    13: "Botão ID 13 (Touchpad Click / Extra)",
+    14: "Botão ID 14 (Extra / M1 Nativo)",
+    15: "Botão ID 15 (Extra / M2 Nativo)"
 }
 
 class GameSirCyclone2:
@@ -47,7 +50,7 @@ class GameSirCyclone2:
         self.led_g = 255
         self.led_b = 128
         self.mappings = {
-            "m1_button_id": 3,
+            "m1_button_id": 2,
             "m2_button_id": 1
         }
         self.profile_name = "Padrão de Fábrica"
@@ -76,7 +79,7 @@ class GameSirCyclone2:
                     self.led_b = led.get("b", 128)
                     
                     mp = data.get("mappings", {})
-                    self.mappings["m1_button_id"] = mp.get("m1_button_id", 3)
+                    self.mappings["m1_button_id"] = mp.get("m1_button_id", 2)
                     self.mappings["m2_button_id"] = mp.get("m2_button_id", 1)
                     
                     self.profile_name = data.get("profile_name", "Padrão de Fábrica")
@@ -123,7 +126,7 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.controller = controller
         self.setWindowTitle("GameSir Nexus - Painel de Controlo Avançado")
-        self.resize(780, 740)
+        self.resize(780, 760)
         self.setStyleSheet("""
             QMainWindow { background-color: #1e1e1e; color: #ffffff; }
             QTabWidget::pane { border: 1px solid #444; border-radius: 4px; }
@@ -148,6 +151,8 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
 
+        self.learning_target = None  # 'm1' ou 'm2' quando estiver aguardando clique
+
         self.setup_tab_logs()
         self.setup_tab_diagnostico()
         self.setup_tab_iluminacao()
@@ -157,9 +162,10 @@ class MainWindow(QMainWindow):
         self.last_pct = {0: 50, 1: 50, 3: 50, 4: 50}
         self.fd = None
         self.evdev_path = None
+        self.evdev_device = None
         self.active_effect_id = None
         
-        self.add_log("Sistema iniciado com suporte a telemetria e botões traseiros M1/M2.")
+        self.add_log("Sistema iniciado com suporte a telemetria e captura dinâmica M1/M2.")
         self.init_hardware()
 
         self.send_controller_led(self.controller.led_r, self.controller.led_g, self.controller.led_b)
@@ -274,7 +280,7 @@ class MainWindow(QMainWindow):
                     pass
         return '/dev/hidraw1' if os.path.exists('/dev/hidraw1') else None
 
-    def send_controller_led(self, r, g, b):
+    def send_controller_led(self, r, g, b, weak_motor=0, strong_motor=0, update_rumble=False):
         self.controller.led_r = r
         self.controller.led_g = g
         self.controller.led_b = b
@@ -287,8 +293,10 @@ class MainWindow(QMainWindow):
 
         report = bytearray(64)
         report[0] = 0x05
-        report[1] = 0xFF
+        report[1] = 0x03 if update_rumble else 0x02
         report[2] = 0x04
+        report[4] = weak_motor
+        report[5] = strong_motor
         report[6] = r
         report[7] = g
         report[8] = b
@@ -299,7 +307,8 @@ class MainWindow(QMainWindow):
             with open(target, 'wb') as f:
                 f.write(report)
                 f.flush()
-            self.add_log(f"[LED] Cor R({r}) G({g}) B({b}) aplicada via {target}")
+            if not update_rumble:
+                self.add_log(f"[LED] Cor R({r}) G({g}) B({b}) aplicada via {target}")
         except PermissionError:
             self.add_log(f"[ERRO PERMISSÃO] Acesso negado a {target}.")
         except Exception as e:
@@ -322,35 +331,45 @@ class MainWindow(QMainWindow):
         self.tabs.addTab(tab, "Vibração")
 
     def trigger_rumble_test(self):
-        if not EVDEV_AVAILABLE or not self.evdev_path:
-            self.add_log("[ERRO] Dispositivo evdev compatível não encontrado.")
-            return
-        try:
-            dev = InputDevice(self.evdev_path)
-            effect = ff.Effect(
-                ecodes.FF_RUMBLE,
-                -1,
-                0,
-                ff.Trigger(0, 0),
-                ff.Replay(1500, 0),
-                ff.Rumble(strong=0xffff, weak=0x8000)
-            )
-            if self.active_effect_id is not None:
+        evdev_ok = False
+        if EVDEV_AVAILABLE:
+            if not self.evdev_device:
+                self.init_hardware()
+            if self.evdev_device:
                 try:
-                    dev.erase_effect(self.active_effect_id)
-                except Exception:
-                    pass
-            self.active_effect_id = dev.upload_effect(effect)
-            dev.write(ecodes.EV_FF, self.active_effect_id, 1)
-            self.add_log("Force Feedback executado com sucesso!")
-        except Exception as e:
-            self.add_log(f"[ERRO FF] {str(e)}")
+                    rumble = ff.Rumble(strong_magnitude=0xffff, weak_magnitude=0x8000)
+                    effect_type = ff.EffectType(ff_rumble_effect=rumble)
+                    effect = ff.Effect(
+                        ecodes.FF_RUMBLE,
+                        -1,
+                        0,
+                        ff.Trigger(0, 0),
+                        ff.Replay(1500, 0),
+                        effect_type
+                    )
+                    if self.active_effect_id is not None:
+                        try:
+                            self.evdev_device.erase_effect(self.active_effect_id)
+                        except Exception:
+                            pass
+                    self.active_effect_id = self.evdev_device.upload_effect(effect)
+                    self.evdev_device.write(ecodes.EV_FF, self.active_effect_id, 1)
+                    evdev_ok = True
+                except Exception as e:
+                    self.add_log(f"[AVISO evdev FF] {str(e)}")
+
+        r, g, b = self.controller.led_r, self.controller.led_g, self.controller.led_b
+        self.send_controller_led(r, g, b, weak_motor=200, strong_motor=255, update_rumble=True)
+        QTimer.singleShot(1500, lambda: self.send_controller_led(
+            self.controller.led_r, self.controller.led_g, self.controller.led_b, 
+            weak_motor=0, strong_motor=0, update_rumble=True
+        ))
+        self.add_log(f"Force Feedback executado com sucesso! (evdev={'OK' if evdev_ok else 'HID Direto'})")
 
     def setup_tab_mapeamento(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
-        # Secção de Perfil e Deadzones
         group_dz = QGroupBox(" Calibração e Deadzones ")
         form_layout = QFormLayout(group_dz)
         self.lbl_profile = QLabel(self.controller.profile_name)
@@ -364,25 +383,42 @@ class MainWindow(QMainWindow):
         form_layout.addRow("Deadzone Analógico Esq (X):", self.spin_dz_lx)
         layout.addWidget(group_dz)
 
-        # Secção de Pás Traseiras M1 e M2
-        group_rear = QGroupBox(" Botões Traseiros (M1 / M2) ")
+        group_rear = QGroupBox(" Botões Traseiros (M1 / M2) e Monitor de Eventos ")
         rear_layout = QVBoxLayout(group_rear)
+
+        # Monitor global de botões para ver na hora o que o controle envia
+        self.lbl_last_btn = QLabel("Último botão pressionado no controle: Nenhum")
+        self.lbl_last_btn.setStyleSheet("background-color: #111; color: #00ff66; padding: 10px; border-radius: 4px; font-weight: bold; border: 1px solid #333;")
+        self.lbl_last_btn.setAlignment(Qt.AlignCenter)
+        rear_layout.addWidget(self.lbl_last_btn)
         
-        # Indicadores Visuais de Pressão em Tempo Real
         live_layout = QHBoxLayout()
         self.lbl_m1_state = QLabel("M1 (Esq): SOLTO")
-        self.lbl_m1_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 10px; border-radius: 4px; font-weight: bold; text-align: center;")
+        self.lbl_m1_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 12px; border-radius: 4px; font-weight: bold;")
         self.lbl_m1_state.setAlignment(Qt.AlignCenter)
         
         self.lbl_m2_state = QLabel("M2 (Dir): SOLTO")
-        self.lbl_m2_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 10px; border-radius: 4px; font-weight: bold; text-align: center;")
+        self.lbl_m2_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 12px; border-radius: 4px; font-weight: bold;")
         self.lbl_m2_state.setAlignment(Qt.AlignCenter)
         
         live_layout.addWidget(self.lbl_m1_state)
         live_layout.addWidget(self.lbl_m2_state)
         rear_layout.addLayout(live_layout)
 
-        # Seletores de Mapeamento do Perfil
+        # Botões de Captura Interativa
+        learn_layout = QHBoxLayout()
+        self.btn_learn_m1 = QPushButton("Capturar Botão M1")
+        self.btn_learn_m1.setStyleSheet("background-color: #444; color: white; padding: 8px; font-weight: bold; border-radius: 4px;")
+        self.btn_learn_m1.clicked.connect(lambda: self.start_learning('m1'))
+
+        self.btn_learn_m2 = QPushButton("Capturar Botão M2")
+        self.btn_learn_m2.setStyleSheet("background-color: #444; color: white; padding: 8px; font-weight: bold; border-radius: 4px;")
+        self.btn_learn_m2.clicked.connect(lambda: self.start_learning('m2'))
+
+        learn_layout.addWidget(self.btn_learn_m1)
+        learn_layout.addWidget(self.btn_learn_m2)
+        rear_layout.addLayout(learn_layout)
+
         map_form = QFormLayout()
         self.combo_m1 = QComboBox()
         self.combo_m2 = QComboBox()
@@ -390,7 +426,7 @@ class MainWindow(QMainWindow):
             self.combo_m1.addItem(bname, bid)
             self.combo_m2.addItem(bname, bid)
             
-        idx_m1 = self.combo_m1.findData(self.controller.mappings.get("m1_button_id", 3))
+        idx_m1 = self.combo_m1.findData(self.controller.mappings.get("m1_button_id", 2))
         if idx_m1 >= 0: self.combo_m1.setCurrentIndex(idx_m1)
         idx_m2 = self.combo_m2.findData(self.controller.mappings.get("m2_button_id", 1))
         if idx_m2 >= 0: self.combo_m2.setCurrentIndex(idx_m2)
@@ -401,6 +437,11 @@ class MainWindow(QMainWindow):
         map_form.addRow("Atribuição M1 (Mão Esquerda):", self.combo_m1)
         map_form.addRow("Atribuição M2 (Mão Direita):", self.combo_m2)
         rear_layout.addLayout(map_form)
+
+        info_hw = QLabel("Dica: Se M1/M2 não emitirem sinal ao apertar, segure o botão 'M' + M1/M2 no controle até piscar e aperte um botão frontal para ativar a pá no firmware.")
+        info_hw.setWordWrap(True)
+        info_hw.setStyleSheet("color: #aaa; font-size: 11px; padding: 4px;")
+        rear_layout.addWidget(info_hw)
         
         layout.addWidget(group_rear)
         
@@ -411,13 +452,19 @@ class MainWindow(QMainWindow):
         
         self.tabs.addTab(tab, "Mapeamento")
 
+    def start_learning(self, target):
+        self.learning_target = target
+        self.lbl_last_btn.setText(f"AGUARDANDO: Pressione a pá {target.upper()} no controle agora...")
+        self.lbl_last_btn.setStyleSheet("background-color: #aa5500; color: white; padding: 10px; border-radius: 4px; font-weight: bold;")
+
     def init_hardware(self):
         paths = ['/dev/input/js0', '/dev/input/js1', '/dev/input/js2']
         device_path = next((p for p in paths if os.path.exists(p)), None)
-        if device_path:
+        if device_path and not self.fd:
             try:
                 self.fd = open(device_path, 'rb')
                 os.set_blocking(self.fd.fileno(), False)
+                self.add_log(f"Telemetria conectada em {device_path}")
             except Exception:
                 pass
 
@@ -426,8 +473,10 @@ class MainWindow(QMainWindow):
                 for dname in list_devices():
                     dev = InputDevice(dname)
                     if 'wireless controller' in dev.name.lower() or 'gamesir' in dev.name.lower():
-                        self.evdev_path = dev.path
-                        break
+                        if ecodes.EV_FF in dev.capabilities():
+                            self.evdev_path = dev.path
+                            self.evdev_device = dev
+                            break
             except Exception:
                 pass
 
@@ -453,10 +502,12 @@ class MainWindow(QMainWindow):
                 if not event or len(event) < event_size:
                     break
                 time_val, value, ev_type, number = struct.unpack(fn_format, event)
-                actual_type = ev_type & ~0x80
                 
-                # Eixos analógicos
-                if actual_type == 2 and number in self.last_pct:
+                # Ignora eventos sintéticos de inicialização do kernel (JS_EVENT_INIT = 0x80)
+                if ev_type & 0x80:
+                    continue
+                
+                if ev_type == 2 and number in self.last_pct:
                     dz = self.controller.DEADZONE_L_X if number == 0 else self.controller.DEADZONE_L_Y
                     f = self.controller.apply_deadzone(value, dz)
                     pct = int(((f + 32767) / 65534) * 100)
@@ -464,32 +515,58 @@ class MainWindow(QMainWindow):
                         self.last_pct[number] = pct
                         gui_needs_update = True
                         
-                # Botões (telemetria em tempo real para M1 e M2)
-                elif actual_type == 1:
-                    m1_target = self.controller.mappings.get("m1_button_id", 3)
+                elif ev_type == 1:
+                    bname = BUTTON_NAMES.get(number, f"Botão ID {number}")
+                    state_txt = "PRESSIONADO" if value == 1 else "SOLTO"
+                    self.lbl_last_btn.setText(f"Evento recebido: {bname} -> {state_txt}")
+                    self.lbl_last_btn.setStyleSheet("background-color: #111; color: #00ff66; padding: 10px; border-radius: 4px; font-weight: bold; border: 1px solid #333;")
+                    self.status_label.setText(f"Input: {bname} ({state_txt})")
+
+                    # Se estiver no modo de captura de M1/M2 e o botão foi pressionado
+                    if self.learning_target and value == 1:
+                        if number not in BUTTON_NAMES:
+                            BUTTON_NAMES[number] = f"Botão ID {number}"
+                            self.combo_m1.addItem(BUTTON_NAMES[number], number)
+                            self.combo_m2.addItem(BUTTON_NAMES[number], number)
+
+                        if self.learning_target == 'm1':
+                            self.controller.mappings["m1_button_id"] = number
+                            idx = self.combo_m1.findData(number)
+                            if idx >= 0: self.combo_m1.setCurrentIndex(idx)
+                            self.add_log(f"[MAPEAMENTO] M1 vinculado ao ID {number} ({bname})")
+                        elif self.learning_target == 'm2':
+                            self.controller.mappings["m2_button_id"] = number
+                            idx = self.combo_m2.findData(number)
+                            if idx >= 0: self.combo_m2.setCurrentIndex(idx)
+                            self.add_log(f"[MAPEAMENTO] M2 vinculado ao ID {number} ({bname})")
+                        self.learning_target = None
+
+                    m1_target = self.controller.mappings.get("m1_button_id", 2)
                     m2_target = self.controller.mappings.get("m2_button_id", 1)
                     
                     if number == m1_target:
                         if value == 1:
-                            self.lbl_m1_state.setText("M1 (Esq): PRESSIONADO")
-                            self.lbl_m1_state.setStyleSheet("background-color: #00aa55; color: white; padding: 10px; border-radius: 4px; font-weight: bold;")
+                            self.lbl_m1_state.setText(f"M1 (Esq - ID {number}): PRESSIONADO")
+                            self.lbl_m1_state.setStyleSheet("background-color: #00aa55; color: white; padding: 12px; border-radius: 4px; font-weight: bold;")
                         else:
-                            self.lbl_m1_state.setText("M1 (Esq): SOLTO")
-                            self.lbl_m1_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 10px; border-radius: 4px; font-weight: bold;")
+                            self.lbl_m1_state.setText(f"M1 (Esq - ID {number}): SOLTO")
+                            self.lbl_m1_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 12px; border-radius: 4px; font-weight: bold;")
                             
-                    elif number == m2_target:
+                    if number == m2_target:
                         if value == 1:
-                            self.lbl_m2_state.setText("M2 (Dir): PRESSIONADO")
-                            self.lbl_m2_state.setStyleSheet("background-color: #0055ff; color: white; padding: 10px; border-radius: 4px; font-weight: bold;")
+                            self.lbl_m2_state.setText(f"M2 (Dir - ID {number}): PRESSIONADO")
+                            self.lbl_m2_state.setStyleSheet("background-color: #0055ff; color: white; padding: 12px; border-radius: 4px; font-weight: bold;")
                         else:
-                            self.lbl_m2_state.setText("M2 (Dir): SOLTO")
-                            self.lbl_m2_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 10px; border-radius: 4px; font-weight: bold;")
+                            self.lbl_m2_state.setText(f"M2 (Dir - ID {number}): SOLTO")
+                            self.lbl_m2_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 12px; border-radius: 4px; font-weight: bold;")
         except Exception:
             pass
             
         if gui_needs_update:
             self.bar_lx.setValue(self.last_pct[0])
             self.bar_ly.setValue(self.last_pct[1])
+            self.bar_rx.setValue(self.last_pct[3])
+            self.bar_ry.setValue(self.last_pct[4])
 
 def main():
     app = QApplication(sys.argv)
