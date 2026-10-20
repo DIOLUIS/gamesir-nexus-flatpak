@@ -4,7 +4,7 @@ sys.path.append('/app/lib/python3.11/site-packages')
 from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QVBoxLayout, 
                                QWidget, QProgressBar, QGroupBox, QTabWidget, QPushButton, 
                                QSlider, QHBoxLayout, QTextEdit, QFormLayout, QSpinBox, 
-                               QColorDialog, QComboBox)
+                               QColorDialog, QComboBox, QCheckBox)
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QColor
 
@@ -46,12 +46,19 @@ class GameSirCyclone2:
         self.DEADZONE_L_Y = 2000
         self.DEADZONE_R_X = 3000
         self.DEADZONE_R_Y = 3000
+        
         self.led_r = 0
         self.led_g = 255
         self.led_b = 128
+        
+        self.vib_strong = 100 # % Motor Esquerdo
+        self.vib_weak = 100   # % Motor Direito
+        
         self.mappings = {
             "m1_button_id": 2,
-            "m2_button_id": 1
+            "m2_button_id": 1,
+            "swap_ab_xy": False,
+            "hair_triggers": False
         }
         self.profile_name = "Padrão de Fábrica"
         self.load_profile()
@@ -67,6 +74,7 @@ class GameSirCyclone2:
                 try:
                     with open(p, 'r') as f:
                         data = json.load(f)
+                    
                     dz = data.get("deadzones", {})
                     self.DEADZONE_L_X = dz.get("left_analog_x", 4000)
                     self.DEADZONE_L_Y = dz.get("left_analog_y", 2000)
@@ -78,9 +86,15 @@ class GameSirCyclone2:
                     self.led_g = led.get("g", 255)
                     self.led_b = led.get("b", 128)
                     
+                    vib = data.get("vibration", {})
+                    self.vib_strong = vib.get("strong_motor_pct", 100)
+                    self.vib_weak = vib.get("weak_motor_pct", 100)
+                    
                     mp = data.get("mappings", {})
                     self.mappings["m1_button_id"] = mp.get("m1_button_id", 2)
                     self.mappings["m2_button_id"] = mp.get("m2_button_id", 1)
+                    self.mappings["swap_ab_xy"] = mp.get("swap_ab_xy", False)
+                    self.mappings["hair_triggers"] = mp.get("hair_triggers", False)
                     
                     self.profile_name = data.get("profile_name", "Padrão de Fábrica")
                     return
@@ -104,6 +118,10 @@ class GameSirCyclone2:
                 "g": self.led_g,
                 "b": self.led_b
             },
+            "vibration": {
+                "strong_motor_pct": self.vib_strong,
+                "weak_motor_pct": self.vib_weak
+            },
             "mappings": self.mappings
         }
         try:
@@ -125,25 +143,25 @@ class MainWindow(QMainWindow):
     def __init__(self, controller):
         super().__init__()
         self.controller = controller
-        self.setWindowTitle("GameSir Nexus - Painel de Controlo Avançado")
-        self.resize(780, 760)
+        self.setWindowTitle("GameSir Nexus - Funcionalidades Completas")
+        self.resize(800, 780)
         self.setStyleSheet("""
             QMainWindow { background-color: #1e1e1e; color: #ffffff; }
             QTabWidget::pane { border: 1px solid #444; border-radius: 4px; }
             QTabBar::tab { background: #2d2d2d; color: #aaa; padding: 10px 20px; border: 1px solid #444; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; }
             QTabBar::tab:selected { background: #0055ff; color: white; font-weight: bold; }
-            QSlider::groove:horizontal { border: 1px solid #444; height: 8px; background: #2d2d2d; border-radius: 4px; }
-            QSlider::handle:horizontal { background: #00ff66; width: 18px; margin: -5px 0; border-radius: 9px; }
+            QSlider::groove:horizontal { border: 1px solid #444; height: 12px; background: #2d2d2d; border-radius: 6px; }
+            QSlider::handle:horizontal { background: #00ff66; width: 24px; margin: -6px 0; border-radius: 12px; }
             QTextEdit { background-color: #000000; color: #00ff66; border: 1px solid #444; font-family: monospace; }
             QComboBox { background-color: #2d2d2d; color: white; border: 1px solid #444; padding: 6px; border-radius: 4px; }
-            QComboBox QAbstractItemView { background-color: #2d2d2d; color: white; selection-background-color: #0055ff; }
+            QCheckBox { color: white; font-weight: bold; }
         """)
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         main_layout = QVBoxLayout(central_widget)
         
-        self.connection_banner = QLabel("Protocolo Validado: GameSir Cyclone 2 (Pás M1 / M2 Ativas)")
+        self.connection_banner = QLabel("Protocolo Validado: GameSir Cyclone 2")
         self.connection_banner.setStyleSheet("color: #00ff66; background-color: #1a3322; padding: 10px; border-radius: 4px; font-weight: bold;")
         self.connection_banner.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(self.connection_banner)
@@ -151,7 +169,7 @@ class MainWindow(QMainWindow):
         self.tabs = QTabWidget()
         main_layout.addWidget(self.tabs)
 
-        self.learning_target = None  # 'm1' ou 'm2' quando estiver aguardando clique
+        self.learning_target = None 
 
         self.setup_tab_logs()
         self.setup_tab_diagnostico()
@@ -159,13 +177,14 @@ class MainWindow(QMainWindow):
         self.setup_tab_vibracao()
         self.setup_tab_mapeamento()
 
-        self.last_pct = {0: 50, 1: 50, 3: 50, 4: 50}
+        # Monitorizando 6 eixos (Esq X/Y, Dir X/Y, Gatilho Esq L2, Gatilho Dir R2)
+        self.last_pct = {0: 50, 1: 50, 2: 0, 3: 50, 4: 50, 5: 0}
         self.fd = None
         self.evdev_path = None
         self.evdev_device = None
         self.active_effect_id = None
         
-        self.add_log("Sistema iniciado com suporte a telemetria e captura dinâmica M1/M2.")
+        self.add_log("Sistema funcional completo iniciado.")
         self.init_hardware()
 
         self.send_controller_led(self.controller.led_r, self.controller.led_g, self.controller.led_b)
@@ -197,6 +216,8 @@ class MainWindow(QMainWindow):
         self.status_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.status_label)
         
+        # Analógicos
+        sticks_layout = QHBoxLayout()
         group_l = QGroupBox(" Analógico Esquerdo ")
         layout_l = QVBoxLayout(group_l)
         self.bar_lx = QProgressBar(); self.bar_lx.setRange(0, 100); self.bar_lx.setValue(50)
@@ -205,7 +226,7 @@ class MainWindow(QMainWindow):
         self.bar_ly.setStyleSheet("QProgressBar::chunk { background-color: #00ff66; }")
         layout_l.addWidget(QLabel("Eixo X:")); layout_l.addWidget(self.bar_lx)
         layout_l.addWidget(QLabel("Eixo Y:")); layout_l.addWidget(self.bar_ly)
-        layout.addWidget(group_l)
+        sticks_layout.addWidget(group_l)
         
         group_r = QGroupBox(" Analógico Direito ")
         layout_r = QVBoxLayout(group_r)
@@ -215,7 +236,20 @@ class MainWindow(QMainWindow):
         self.bar_ry.setStyleSheet("QProgressBar::chunk { background-color: #00ff66; }")
         layout_r.addWidget(QLabel("Eixo X:")); layout_r.addWidget(self.bar_rx)
         layout_r.addWidget(QLabel("Eixo Y:")); layout_r.addWidget(self.bar_ry)
-        layout.addWidget(group_r)
+        sticks_layout.addWidget(group_r)
+        layout.addLayout(sticks_layout)
+
+        # Gatilhos Traseiros L2 / R2
+        group_trig = QGroupBox(" Gatilhos Traseiros Analógicos (L2 / R2) ")
+        layout_trig = QVBoxLayout(group_trig)
+        self.bar_l2 = QProgressBar(); self.bar_l2.setRange(0, 100); self.bar_l2.setValue(0)
+        self.bar_r2 = QProgressBar(); self.bar_r2.setRange(0, 100); self.bar_r2.setValue(0)
+        self.bar_l2.setStyleSheet("QProgressBar::chunk { background-color: #00aaff; }")
+        self.bar_r2.setStyleSheet("QProgressBar::chunk { background-color: #00aaff; }")
+        layout_trig.addWidget(QLabel("L2 / LT (Esquerdo):")); layout_trig.addWidget(self.bar_l2)
+        layout_trig.addWidget(QLabel("R2 / RT (Direito):")); layout_trig.addWidget(self.bar_r2)
+        layout.addWidget(group_trig)
+
         self.tabs.addTab(tab, "Diagnóstico")
 
     def setup_tab_iluminacao(self):
@@ -288,7 +322,6 @@ class MainWindow(QMainWindow):
 
         target = self.get_gamesir_node()
         if not target:
-            self.add_log("[ERRO] Controle GameSir não localizado em /dev/hidraw*")
             return
 
         report = bytearray(64)
@@ -307,87 +340,116 @@ class MainWindow(QMainWindow):
             with open(target, 'wb') as f:
                 f.write(report)
                 f.flush()
-            if not update_rumble:
-                self.add_log(f"[LED] Cor R({r}) G({g}) B({b}) aplicada via {target}")
-        except PermissionError:
-            self.add_log(f"[ERRO PERMISSÃO] Acesso negado a {target}.")
-        except Exception as e:
-            self.add_log(f"[FALHA LED] {e}")
+        except Exception:
+            pass
 
     def setup_tab_vibracao(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
-        self.vib_status_label = QLabel("Motores de Vibração Assinados (Force Feedback)")
+        self.vib_status_label = QLabel("Intensidade dos Motores de Vibração")
         self.vib_status_label.setStyleSheet("color: #aaaaaa; background-color: #2d2d2d; padding: 15px; border-radius: 4px; font-weight: bold;")
         self.vib_status_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(self.vib_status_label)
 
-        btn_test_rumble = QPushButton("Executar Teste de Força (1.5s)")
-        btn_test_rumble.setStyleSheet("QPushButton { background-color: #0055ff; color: white; font-weight: bold; padding: 18px; border-radius: 4px; font-size: 14px; }")
+        # Slider Motor Forte (Esquerdo)
+        group_strong = QGroupBox(" Motor Forte / Pesado (Punho Esquerdo) ")
+        layout_strong = QVBoxLayout(group_strong)
+        self.lbl_strong_val = QLabel(f"{self.controller.vib_strong}%")
+        self.lbl_strong_val.setAlignment(Qt.AlignCenter)
+        self.slider_strong = QSlider(Qt.Horizontal)
+        self.slider_strong.setRange(0, 100)
+        self.slider_strong.setValue(self.controller.vib_strong)
+        self.slider_strong.valueChanged.connect(self.update_vib_strong)
+        layout_strong.addWidget(self.lbl_strong_val)
+        layout_strong.addWidget(self.slider_strong)
+        layout.addWidget(group_strong)
+
+        # Slider Motor Fraco (Direito)
+        group_weak = QGroupBox(" Motor Fraco / Leve (Punho Direito) ")
+        layout_weak = QVBoxLayout(group_weak)
+        self.lbl_weak_val = QLabel(f"{self.controller.vib_weak}%")
+        self.lbl_weak_val.setAlignment(Qt.AlignCenter)
+        self.slider_weak = QSlider(Qt.Horizontal)
+        self.slider_weak.setRange(0, 100)
+        self.slider_weak.setValue(self.controller.vib_weak)
+        self.slider_weak.valueChanged.connect(self.update_vib_weak)
+        layout_weak.addWidget(self.lbl_weak_val)
+        layout_weak.addWidget(self.slider_weak)
+        layout.addWidget(group_weak)
+
+        btn_test_rumble = QPushButton("Executar Teste de Vibração com Valores Atuais")
+        btn_test_rumble.setStyleSheet("QPushButton { background-color: #aa00ff; color: white; font-weight: bold; padding: 18px; border-radius: 4px; font-size: 14px; }")
         btn_test_rumble.clicked.connect(self.trigger_rumble_test)
         layout.addWidget(btn_test_rumble)
 
         self.tabs.addTab(tab, "Vibração")
 
+    def update_vib_strong(self, val):
+        self.controller.vib_strong = val
+        self.lbl_strong_val.setText(f"{val}%")
+
+    def update_vib_weak(self, val):
+        self.controller.vib_weak = val
+        self.lbl_weak_val.setText(f"{val}%")
+
     def trigger_rumble_test(self):
+        strong_val = int(65535 * (self.controller.vib_strong / 100.0))
+        weak_val = int(65535 * (self.controller.vib_weak / 100.0))
+        
         evdev_ok = False
         if EVDEV_AVAILABLE:
             if not self.evdev_device:
                 self.init_hardware()
             if self.evdev_device:
                 try:
-                    rumble = ff.Rumble(strong_magnitude=0xffff, weak_magnitude=0x8000)
+                    rumble = ff.Rumble(strong_magnitude=strong_val, weak_magnitude=weak_val)
                     effect_type = ff.EffectType(ff_rumble_effect=rumble)
-                    effect = ff.Effect(
-                        ecodes.FF_RUMBLE,
-                        -1,
-                        0,
-                        ff.Trigger(0, 0),
-                        ff.Replay(1500, 0),
-                        effect_type
-                    )
+                    effect = ff.Effect(ecodes.FF_RUMBLE, -1, 0, ff.Trigger(0, 0), ff.Replay(1500, 0), effect_type)
                     if self.active_effect_id is not None:
                         try:
                             self.evdev_device.erase_effect(self.active_effect_id)
-                        except Exception:
-                            pass
+                        except Exception: pass
                     self.active_effect_id = self.evdev_device.upload_effect(effect)
                     self.evdev_device.write(ecodes.EV_FF, self.active_effect_id, 1)
                     evdev_ok = True
                 except Exception as e:
-                    self.add_log(f"[AVISO evdev FF] {str(e)}")
+                    pass
 
-        r, g, b = self.controller.led_r, self.controller.led_g, self.controller.led_b
-        self.send_controller_led(r, g, b, weak_motor=200, strong_motor=255, update_rumble=True)
+        # Falback HID (escala de 0-255)
+        strong_hid = int(255 * (self.controller.vib_strong / 100.0))
+        weak_hid = int(255 * (self.controller.vib_weak / 100.0))
+        
+        self.send_controller_led(self.controller.led_r, self.controller.led_g, self.controller.led_b, weak_motor=weak_hid, strong_motor=strong_hid, update_rumble=True)
         QTimer.singleShot(1500, lambda: self.send_controller_led(
-            self.controller.led_r, self.controller.led_g, self.controller.led_b, 
-            weak_motor=0, strong_motor=0, update_rumble=True
+            self.controller.led_r, self.controller.led_g, self.controller.led_b, weak_motor=0, strong_motor=0, update_rumble=True
         ))
-        self.add_log(f"Force Feedback executado com sucesso! (evdev={'OK' if evdev_ok else 'HID Direto'})")
+        self.add_log(f"Teste de Vibração enviado! (Forte: {self.controller.vib_strong}%, Fraco: {self.controller.vib_weak}%)")
 
     def setup_tab_mapeamento(self):
         tab = QWidget()
         layout = QVBoxLayout(tab)
         
-        group_dz = QGroupBox(" Calibração e Deadzones ")
-        form_layout = QFormLayout(group_dz)
-        self.lbl_profile = QLabel(self.controller.profile_name)
-        self.lbl_profile.setStyleSheet("color: #00ff66; font-weight: bold;")
-        form_layout.addRow("Perfil Ativo:", self.lbl_profile)
+        # Mapeamento Global & Swaps
+        group_global = QGroupBox(" Funcionalidades Globais ")
+        form_global = QFormLayout(group_global)
         
-        self.spin_dz_lx = QSpinBox()
-        self.spin_dz_lx.setRange(0, 15000)
-        self.spin_dz_lx.setValue(self.controller.DEADZONE_L_X)
-        self.spin_dz_lx.valueChanged.connect(lambda v: setattr(self.controller, 'DEADZONE_L_X', v))
-        form_layout.addRow("Deadzone Analógico Esq (X):", self.spin_dz_lx)
-        layout.addWidget(group_dz)
+        self.chk_swap_abxy = QCheckBox("Trocar A/B e X/Y (Layout estilo Nintendo Switch)")
+        self.chk_swap_abxy.setChecked(self.controller.mappings.get("swap_ab_xy", False))
+        self.chk_swap_abxy.stateChanged.connect(lambda v: self.controller.mappings.update({"swap_ab_xy": bool(v)}))
+        
+        self.chk_hair = QCheckBox("Modo Hair Trigger (Gatilhos rápidos por software)")
+        self.chk_hair.setChecked(self.controller.mappings.get("hair_triggers", False))
+        self.chk_hair.stateChanged.connect(lambda v: self.controller.mappings.update({"hair_triggers": bool(v)}))
+        
+        form_global.addRow(self.chk_swap_abxy)
+        form_global.addRow(self.chk_hair)
+        layout.addWidget(group_global)
 
-        group_rear = QGroupBox(" Botões Traseiros (M1 / M2) e Monitor de Eventos ")
+        group_rear = QGroupBox(" Botões Traseiros (M1 / M2) e Monitor ")
         rear_layout = QVBoxLayout(group_rear)
 
-        # Monitor global de botões para ver na hora o que o controle envia
-        self.lbl_last_btn = QLabel("Último botão pressionado no controle: Nenhum")
+        self.lbl_last_btn = QLabel("Último evento: Nenhum")
         self.lbl_last_btn.setStyleSheet("background-color: #111; color: #00ff66; padding: 10px; border-radius: 4px; font-weight: bold; border: 1px solid #333;")
         self.lbl_last_btn.setAlignment(Qt.AlignCenter)
         rear_layout.addWidget(self.lbl_last_btn)
@@ -405,7 +467,6 @@ class MainWindow(QMainWindow):
         live_layout.addWidget(self.lbl_m2_state)
         rear_layout.addLayout(live_layout)
 
-        # Botões de Captura Interativa
         learn_layout = QHBoxLayout()
         self.btn_learn_m1 = QPushButton("Capturar Botão M1")
         self.btn_learn_m1.setStyleSheet("background-color: #444; color: white; padding: 8px; font-weight: bold; border-radius: 4px;")
@@ -437,11 +498,6 @@ class MainWindow(QMainWindow):
         map_form.addRow("Atribuição M1 (Mão Esquerda):", self.combo_m1)
         map_form.addRow("Atribuição M2 (Mão Direita):", self.combo_m2)
         rear_layout.addLayout(map_form)
-
-        info_hw = QLabel("Dica: Se M1/M2 não emitirem sinal ao apertar, segure o botão 'M' + M1/M2 no controle até piscar e aperte um botão frontal para ativar a pá no firmware.")
-        info_hw.setWordWrap(True)
-        info_hw.setStyleSheet("color: #aaa; font-size: 11px; padding: 4px;")
-        rear_layout.addWidget(info_hw)
         
         layout.addWidget(group_rear)
         
@@ -454,7 +510,7 @@ class MainWindow(QMainWindow):
 
     def start_learning(self, target):
         self.learning_target = target
-        self.lbl_last_btn.setText(f"AGUARDANDO: Pressione a pá {target.upper()} no controle agora...")
+        self.lbl_last_btn.setText(f"AGUARDANDO: Pressione a pá {target.upper()}...")
         self.lbl_last_btn.setStyleSheet("background-color: #aa5500; color: white; padding: 10px; border-radius: 4px; font-weight: bold;")
 
     def init_hardware(self):
@@ -464,7 +520,6 @@ class MainWindow(QMainWindow):
             try:
                 self.fd = open(device_path, 'rb')
                 os.set_blocking(self.fd.fileno(), False)
-                self.add_log(f"Telemetria conectada em {device_path}")
             except Exception:
                 pass
 
@@ -503,26 +558,31 @@ class MainWindow(QMainWindow):
                     break
                 time_val, value, ev_type, number = struct.unpack(fn_format, event)
                 
-                # Ignora eventos sintéticos de inicialização do kernel (JS_EVENT_INIT = 0x80)
                 if ev_type & 0x80:
                     continue
                 
-                if ev_type == 2 and number in self.last_pct:
-                    dz = self.controller.DEADZONE_L_X if number == 0 else self.controller.DEADZONE_L_Y
-                    f = self.controller.apply_deadzone(value, dz)
-                    pct = int(((f + 32767) / 65534) * 100)
-                    if self.last_pct[number] != pct:
-                        self.last_pct[number] = pct
-                        gui_needs_update = True
+                if ev_type == 2:
+                    # Analógicos
+                    if number in [0, 1, 3, 4]:
+                        dz = self.controller.DEADZONE_L_X if number in [0, 1] else self.controller.DEADZONE_R_X
+                        f = self.controller.apply_deadzone(value, dz)
+                        pct = int(((f + 32767) / 65534) * 100)
+                        if self.last_pct[number] != pct:
+                            self.last_pct[number] = pct
+                            gui_needs_update = True
+                    # Gatilhos L2 (2) / R2 (5)
+                    elif number in [2, 5]:
+                        pct = int(((value + 32767) / 65534) * 100)
+                        if self.last_pct[number] != pct:
+                            self.last_pct[number] = pct
+                            gui_needs_update = True
                         
                 elif ev_type == 1:
                     bname = BUTTON_NAMES.get(number, f"Botão ID {number}")
                     state_txt = "PRESSIONADO" if value == 1 else "SOLTO"
                     self.lbl_last_btn.setText(f"Evento recebido: {bname} -> {state_txt}")
                     self.lbl_last_btn.setStyleSheet("background-color: #111; color: #00ff66; padding: 10px; border-radius: 4px; font-weight: bold; border: 1px solid #333;")
-                    self.status_label.setText(f"Input: {bname} ({state_txt})")
 
-                    # Se estiver no modo de captura de M1/M2 e o botão foi pressionado
                     if self.learning_target and value == 1:
                         if number not in BUTTON_NAMES:
                             BUTTON_NAMES[number] = f"Botão ID {number}"
@@ -533,12 +593,10 @@ class MainWindow(QMainWindow):
                             self.controller.mappings["m1_button_id"] = number
                             idx = self.combo_m1.findData(number)
                             if idx >= 0: self.combo_m1.setCurrentIndex(idx)
-                            self.add_log(f"[MAPEAMENTO] M1 vinculado ao ID {number} ({bname})")
                         elif self.learning_target == 'm2':
                             self.controller.mappings["m2_button_id"] = number
                             idx = self.combo_m2.findData(number)
                             if idx >= 0: self.combo_m2.setCurrentIndex(idx)
-                            self.add_log(f"[MAPEAMENTO] M2 vinculado ao ID {number} ({bname})")
                         self.learning_target = None
 
                     m1_target = self.controller.mappings.get("m1_button_id", 2)
@@ -563,10 +621,12 @@ class MainWindow(QMainWindow):
             pass
             
         if gui_needs_update:
-            self.bar_lx.setValue(self.last_pct[0])
-            self.bar_ly.setValue(self.last_pct[1])
-            self.bar_rx.setValue(self.last_pct[3])
-            self.bar_ry.setValue(self.last_pct[4])
+            self.bar_lx.setValue(self.last_pct.get(0, 50))
+            self.bar_ly.setValue(self.last_pct.get(1, 50))
+            self.bar_rx.setValue(self.last_pct.get(3, 50))
+            self.bar_ry.setValue(self.last_pct.get(4, 50))
+            self.bar_l2.setValue(self.last_pct.get(2, 0))
+            self.bar_r2.setValue(self.last_pct.get(5, 0))
 
 def main():
     app = QApplication(sys.argv)
