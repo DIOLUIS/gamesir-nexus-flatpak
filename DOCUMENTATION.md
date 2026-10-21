@@ -1,31 +1,25 @@
-# Documentação Oficial: GameSir Nexus (Painel de Controlo Avançado para Linux)
+# GameSir Nexus - Linux Edition (Documentação Técnica)
+**Versão:** 0.9.5 Beta
+**Desenvolvedor:** Diotec Software (Dionísio Luís)
 
-## 1. Visão Geral do Projeto
-O **GameSir Nexus** é uma aplicação de desktop desenvolvida em **Python** com interface gráfica em **PySide6**, projetada para operar no ecossistema **Flatpak** no Ubuntu. O objetivo é fornecer suporte avançado e de baixo nível para o comando **GameSir Cyclone 2**, equiparando recursos do software proprietário de Windows.
+## 1. Visão Geral da Arquitetura
+Aplicação de Engenharia Reversa desenvolvida em Python 3 + PySide6 (Qt6) para controlo, telemetria e gestão de comandos GameSir (otimizado para o modelo Cyclone 2) em sistemas Linux, empacotada de forma isolada via Flatpak sobre o runtime KDE 6.6.
 
-## 2. Arquitetura e Tecnologias
-- **Linguagem & Runtime:** Python 3.11 sob ambiente Flatpak.
-- **Camada de Hardware & Kernels:**
-  - Subsistema clássico de joystick (`/dev/input/js*`).
-  - Subsistema de eventos e Force Feedback (`evdev.ff`).
-  - Comunicação direta USB/HID via descritores `hidraw`.
+## 2. Descobertas de Engenharia Reversa e Hardware
+- **Telemetria de Baixo Nível (`/dev/input/js*`):** Leitura direta em binário (`struct.unpack('IhBB')`) sem bloqueio (`os.set_blocking(..., False)`), permitindo monitorização a 60Hz (16ms) dos analógicos L3/R3 (com cálculo de Deadzone) e gatilhos analógicos LT/RT.
+- **Motor Hot-Plug Resiliente:** Tratamento explícito de `BlockingIOError` (repouso) vs `b''` / `OSError` (desconexão física do cabo USB), evitando falhas de desalocação de memória (`none_dealloc`) no ciclo de eventos do Qt6.
+- **Vibração Tática (`evdev`):** Injeção de efeitos `FF_RUMBLE` assíncronos para controlo individual dos motores pesado (esquerdo) e leve (direito).
+- **Captura das Pás Traseiras (M1 / M2):** Reconhecimento híbrido tanto dos IDs nativos (14 e 15) como do espelhamento de botões via hardware, contornando a limitação do driver XInput padrão no Linux.
+- **Injeção de Cores no LED Central (Broadcast HID):** Descoberta do relatório de 64 bytes com prefixo `0x05` (`0x05, 0x02/0x03, 0x04, 0x00, Weak, Strong, R, G, B...`). O software faz broadcast para todos os nós `/dev/hidraw*` associados ao comando para contornar as múltiplas interfaces virtuais criadas pelo firmware.
 
-## 3. Módulos e Funcionalidades Consolidadas
+## 3. Especificações do Empacotamento Flatpak
+- **Runtime / SDK:** `org.kde.Platform//6.6` e `org.kde.Sdk//6.6`
+- **Dependências Python (`python-deps`):** Instalação isolada em `/app` via `pip install --prefix=/app PySide6 evdev` com permissão de rede restrita apenas à fase de compilação (`--share=network`).
+- **Permissões de Execução (`finish-args`):**
+  - `--socket=x11`, `--socket=wayland`, `--socket=fallback-x11`
+  - `--env=QT_QPA_PLATFORM=xcb` (Garante compatibilidade total com janelas Frameless e posicionamento manual da janela)
+  - `--device=dri` e `--device=all` (Acesso direto a aceleração gráfica e portas `/dev/input/*` e `/dev/hidraw*`)
 
-### 3.1. Telemetria Completa (6 Eixos)
-- Monitorização a 60Hz dos analógicos (Esq X/Y, Dir X/Y) e Gatilhos Traseiros Analógicos (L2 e R2 de 0 a 100%).
-- Filtragem matemática de zonas mortas configurável.
-
-### 3.2. Vibração Híbrida Independente
-- Controlo granular (0-100%) de intensidade separado para o Motor Forte (Esquerdo) e Motor Fraco (Direito).
-- Disparo primário via `evdev.ff` e fall-back via pacote HID (Output Report `0x05`).
-
-### 3.3. Controlo de Iluminação RGB
-- Seletor de cores nativo com atalhos predefinidos e escrita direta no endpoint `hidraw` sem desconexões no barramento.
-
-### 3.4. Captura Dinâmica M1 / M2 e Funcionalidades Globais
-- **Modo de Aprendizagem Interativa:** Captura de botões on-the-fly para M1 e M2.
-- **Swaps Globais:** Suporte em software para troca de layout (A/B X/Y) e modo "Hair Trigger" (gatilho rápido digital).
-
-### 3.5. Persistência de Perfis (JSON)
-- Armazenamento centralizado em `~/.var/app/com.github.dioluis.gamesir-nexus/config/profile_default.json`.
+## 4. Contacto e Apoio
+- **Relatórios de Compatibilidade e Bugs:** diotec.soft@gmail.com
+- **Apoio ao Projeto (PIX Santander):** a6e35576-02ec-4f43-a243-3e65ee8e9c3d

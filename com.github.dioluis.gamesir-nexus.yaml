@@ -1,36 +1,39 @@
 app-id: com.github.dioluis.gamesir-nexus
-runtime: org.freedesktop.Platform
-runtime-version: '23.08'
-sdk: org.freedesktop.Sdk
+runtime: org.kde.Platform
+runtime-version: '6.6'
+sdk: org.kde.Sdk
 command: gamesir-nexus
-
 finish-args:
   - --share=ipc
-  - --socket=wayland
   - --socket=fallback-x11
+  - --socket=wayland
+  - --socket=x11
+  - --device=dri
   - --device=all
-  - --env=QT_QPA_PLATFORM=wayland;xcb
-
-build-options:
-  env:
-    PYTHONDONTWRITEBYTECODE: "1"
-  build-args:
-    - --share=network
-
+  - --env=QT_QPA_PLATFORM=xcb
 modules:
-  - name: xcb-util-cursor
-    buildsystem: autotools
-    sources:
-      - type: archive
-        url: https://xorg.freedesktop.org/archive/individual/lib/xcb-util-cursor-0.1.4.tar.gz
-        sha256: cc8608ebb695742b6cf84712be29b2b66aa5f6768039528794fca0fa283022bf
+  - name: python-deps
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
+    build-commands:
+      - pip install --prefix=/app PySide6 evdev
 
   - name: gamesir-nexus
     buildsystem: simple
     build-commands:
-      - pip3 install --prefix=/app PySide6
       - install -D gamesir-nexus.py /app/bin/gamesir-nexus
       - chmod +x /app/bin/gamesir-nexus
+      - install -D logo.jpeg /app/bin/logo.jpeg
+      - install -D chave.png /app/bin/chave.png
+      - install -D com.github.dioluis.gamesir-nexus.desktop /app/share/applications/com.github.dioluis.gamesir-nexus.desktop
     sources:
       - type: file
         path: gamesir-nexus.py
+      - type: file
+        path: logo.jpeg
+      - type: file
+        path: chave.png
+      - type: file
+        path: com.github.dioluis.gamesir-nexus.desktop

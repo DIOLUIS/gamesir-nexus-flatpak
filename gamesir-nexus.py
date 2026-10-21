@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
-import os, json, struct, sys, glob, zlib, traceback, errno
-sys.path.append('/app/lib/python3.11/site-packages')
+import os, json, struct, sys, glob, traceback, zlib
+
+# Adiciona dinamicamente o caminho das bibliotecas instaladas pelo Flatpak
+for p in glob.glob('/app/lib/python3.*/site-packages'):
+    sys.path.append(p)
+
 from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QVBoxLayout, 
-                               QWidget, QProgressBar, QGroupBox, QTabWidget, QPushButton, 
-                               QSlider, QHBoxLayout, QTextEdit, QFormLayout, QSpinBox, 
-                               QColorDialog, QComboBox, QCheckBox)
-from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QColor
+                               QWidget, QProgressBar, QPushButton, QSlider, 
+                               QHBoxLayout, QTextEdit, QFormLayout, QComboBox, 
+                               QCheckBox, QStackedWidget, QFrame, QGridLayout,
+                               QColorDialog, QListWidget, QLineEdit)
+from PySide6.QtCore import Qt, QTimer, QPoint
+from PySide6.QtGui import QColor, QPixmap, QClipboard
 
 try:
     from evdev import InputDevice, ecodes, ff, list_devices
@@ -14,92 +19,58 @@ try:
 except ImportError:
     EVDEV_AVAILABLE = False
 
-try:
-    import hid
-    HID_AVAILABLE = True
-except ImportError:
-    HID_AVAILABLE = False
-
 BUTTON_NAMES = {
-    0: "Botão ID 0 (Cruz / A)",
-    1: "Botão ID 1 (Círculo / B)",
-    2: "Botão ID 2 (Triângulo / X)",
-    3: "Botão ID 3 (Quadrado / Y)",
-    4: "Botão ID 4 (L1 / LB)",
-    5: "Botão ID 5 (R1 / RB)",
-    6: "Botão ID 6 (L2 / LT Digital)",
-    7: "Botão ID 7 (R2 / RT Digital)",
-    8: "Botão ID 8 (Share / Select)",
-    9: "Botão ID 9 (Options / Start)",
-    10: "Botão ID 10 (PS / Home)",
-    11: "Botão ID 11 (L3 / Analógico Esq)",
-    12: "Botão ID 12 (R3 / Analógico Dir)",
-    13: "Botão ID 13 (Touchpad Click / Extra)",
-    14: "Botão ID 14 (Extra / M1 Nativo)",
-    15: "Botão ID 15 (Extra / M2 Nativo)"
+    -1: "🚫 Nenhum / Desativado",
+    0: "A", 1: "B", 2: "X", 3: "Y",
+    4: "L1", 5: "R1", 6: "L2 (Digital)", 7: "R2 (Digital)",
+    8: "Select", 9: "Start", 10: "Home",
+    11: "L3", 12: "R3", 13: "Touch",
+    14: "M1 Nativo", 15: "M2 Nativo"
 }
 
 class GameSirCyclone2:
     def __init__(self, profile_path="profile_default.json"):
         self.profile_path = profile_path
-        self.DEADZONE_L_X = 4000
-        self.DEADZONE_L_Y = 2000
-        self.DEADZONE_R_X = 3000
-        self.DEADZONE_R_Y = 3000
-        
-        self.led_r = 0
-        self.led_g = 255
-        self.led_b = 128
-        
-        self.vib_strong = 100 # % Motor Esquerdo
-        self.vib_weak = 100   # % Motor Direito
-        
-        self.mappings = {
-            "m1_button_id": 2,
-            "m2_button_id": 1,
-            "swap_ab_xy": False,
-            "hair_triggers": False
-        }
-        self.profile_name = "Padrão de Fábrica"
+        self.profile_name = "Perfil 1"
+        self.DEADZONE_L_X = 4000; self.DEADZONE_L_Y = 2000
+        self.DEADZONE_R_X = 3000; self.DEADZONE_R_Y = 3000
+        self.led_mode = "Fluxo"
+        self.led_brightness = 100
+        self.led_speed = 50
+        self.led_r = 255; self.led_g = 0; self.led_b = 0
+        self.vib_strong = 100; self.vib_weak = 100
+        self.mappings = { "m1_button_id": 2, "m2_button_id": 1, "swap_ab_xy": False, "hair_triggers": False }
         self.load_profile()
 
     def load_profile(self):
         paths = [
-            self.profile_path,
-            f"/app/bin/{self.profile_path}",
+            self.profile_path, f"/app/bin/{self.profile_path}",
             os.path.expanduser("~/.var/app/com.github.dioluis.gamesir-nexus/config/profile_default.json")
         ]
         for p in paths:
             if os.path.exists(p):
                 try:
-                    with open(p, 'r') as f:
-                        data = json.load(f)
-                    
+                    with open(p, 'r') as f: data = json.load(f)
                     dz = data.get("deadzones", {})
                     self.DEADZONE_L_X = dz.get("left_analog_x", 4000)
                     self.DEADZONE_L_Y = dz.get("left_analog_y", 2000)
                     self.DEADZONE_R_X = dz.get("right_analog_x", 3000)
                     self.DEADZONE_R_Y = dz.get("right_analog_y", 3000)
-                    
                     led = data.get("lighting", {})
-                    self.led_r = led.get("r", 0)
-                    self.led_g = led.get("g", 255)
-                    self.led_b = led.get("b", 128)
-                    
+                    self.led_r = led.get("r", 255); self.led_g = led.get("g", 0); self.led_b = led.get("b", 0)
+                    self.led_mode = led.get("mode", "Fluxo")
+                    self.led_brightness = led.get("brightness", 100)
+                    self.led_speed = led.get("speed", 50)
                     vib = data.get("vibration", {})
                     self.vib_strong = vib.get("strong_motor_pct", 100)
                     self.vib_weak = vib.get("weak_motor_pct", 100)
-                    
                     mp = data.get("mappings", {})
                     self.mappings["m1_button_id"] = mp.get("m1_button_id", 2)
                     self.mappings["m2_button_id"] = mp.get("m2_button_id", 1)
                     self.mappings["swap_ab_xy"] = mp.get("swap_ab_xy", False)
                     self.mappings["hair_triggers"] = mp.get("hair_triggers", False)
-                    
-                    self.profile_name = data.get("profile_name", "Padrão de Fábrica")
                     return
-                except Exception:
-                    pass
+                except Exception: pass
 
     def save_profile(self):
         config_dir = os.path.expanduser("~/.var/app/com.github.dioluis.gamesir-nexus/config")
@@ -107,200 +78,330 @@ class GameSirCyclone2:
         target_path = os.path.join(config_dir, "profile_default.json")
         data = {
             "profile_name": self.profile_name,
-            "deadzones": {
-                "left_analog_x": self.DEADZONE_L_X,
-                "left_analog_y": self.DEADZONE_L_Y,
-                "right_analog_x": self.DEADZONE_R_X,
-                "right_analog_y": self.DEADZONE_R_Y
-            },
-            "lighting": {
-                "r": self.led_r,
-                "g": self.led_g,
-                "b": self.led_b
-            },
-            "vibration": {
-                "strong_motor_pct": self.vib_strong,
-                "weak_motor_pct": self.vib_weak
-            },
+            "deadzones": { "left_analog_x": self.DEADZONE_L_X, "left_analog_y": self.DEADZONE_L_Y, "right_analog_x": self.DEADZONE_R_X, "right_analog_y": self.DEADZONE_R_Y },
+            "lighting": { "r": self.led_r, "g": self.led_g, "b": self.led_b, "mode": self.led_mode, "brightness": self.led_brightness, "speed": self.led_speed },
+            "vibration": { "strong_motor_pct": self.vib_strong, "weak_motor_pct": self.vib_weak },
             "mappings": self.mappings
         }
         try:
-            with open(target_path, 'w') as f:
-                json.dump(data, f, indent=4)
+            with open(target_path, 'w') as f: json.dump(data, f, indent=4)
             return True
-        except Exception:
-            return False
+        except Exception: return False
 
     def apply_deadzone(self, raw_value, deadzone):
-        if abs(raw_value) < deadzone:
-            return 0
-        if raw_value > 0:
-            return int(((raw_value - deadzone) / (32767 - deadzone)) * 32767)
-        else:
-            return int(((raw_value + deadzone) / (32767 - deadzone)) * -32767)
+        if abs(raw_value) < deadzone: return 0
+        if raw_value > 0: return int(((raw_value - deadzone) / (32767 - deadzone)) * 32767)
+        else: return int(((raw_value + deadzone) / (32767 - deadzone)) * -32767)
 
 class MainWindow(QMainWindow):
     def __init__(self, controller):
         super().__init__()
         self.controller = controller
-        self.setWindowTitle("GameSir Nexus - Funcionalidades Completas")
-        self.resize(800, 780)
+        
+        self.setWindowFlags(Qt.FramelessWindowHint)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setWindowTitle("GameSir Connect - Linux Edition")
+        self.resize(1250, 800)
+        self.old_pos = None
+        self.learning_target = None
+        
         self.setStyleSheet("""
-            QMainWindow { background-color: #1e1e1e; color: #ffffff; }
-            QTabWidget::pane { border: 1px solid #444; border-radius: 4px; }
-            QTabBar::tab { background: #2d2d2d; color: #aaa; padding: 10px 20px; border: 1px solid #444; border-bottom: none; border-top-left-radius: 4px; border-top-right-radius: 4px; }
-            QTabBar::tab:selected { background: #0055ff; color: white; font-weight: bold; }
-            QSlider::groove:horizontal { border: 1px solid #444; height: 12px; background: #2d2d2d; border-radius: 6px; }
-            QSlider::handle:horizontal { background: #00ff66; width: 24px; margin: -6px 0; border-radius: 12px; }
-            QTextEdit { background-color: #000000; color: #00ff66; border: 1px solid #444; font-family: monospace; }
-            QComboBox { background-color: #2d2d2d; color: white; border: 1px solid #444; padding: 6px; border-radius: 4px; }
-            QCheckBox { color: white; font-weight: bold; }
+            * { color: #f4f4f5; font-family: "Segoe UI", "Ubuntu", sans-serif; }
+            #main_container { background-color: #0b0b0e; border-radius: 12px; border: 1px solid #3f3f46; }
+            QListWidget { background-color: #16161b; border-right: 1px solid #2a2a32; padding-top: 15px; outline: none; border-bottom-left-radius: 12px; }
+            QListWidget::item { padding: 14px 20px; color: #a1a1aa; border-radius: 8px; margin: 4px 12px; font-weight: bold; font-size: 14px; }
+            QListWidget::item:hover { background-color: #2a2a32; color: #f4f4f5; }
+            QListWidget::item:selected { background-color: #ed4e4e; color: #ffffff; }
+            QFrame#card { background-color: #1c1c22; border-radius: 12px; border: 1px solid #2a2a32; }
+            QLabel#card_title { color: #a1a1aa; font-size: 14px; font-weight: bold; }
+            QSlider::groove:horizontal { background: #3f3f46; height: 6px; border-radius: 3px; }
+            QSlider::sub-page:horizontal { background: #ed4e4e; border-radius: 3px; }
+            QSlider::handle:horizontal { background: #ed4e4e; width: 16px; margin: -5px 0; border-radius: 8px; border: 2px solid #ed4e4e; }
+            QSlider::handle:horizontal:hover { background: #ffffff; }
+            QProgressBar { background-color: #27272a; border-radius: 4px; text-align: center; color: transparent; height: 8px; border: none; }
+            QProgressBar::chunk { background-color: #ed4e4e; border-radius: 4px; }
+            QPushButton { background-color: #2a2a32; color: #ffffff; border: 1px solid #3f3f46; border-radius: 6px; padding: 10px; font-weight: bold; font-size: 13px; }
+            QPushButton:hover { background-color: #3f3f46; border: 1px solid #ed4e4e; }
+            QPushButton:pressed { background-color: #ed4e4e; color: white; }
+            QPushButton#btn_accent { background-color: #ed4e4e; border: none; }
+            QPushButton#btn_accent:hover { background-color: #dc2626; }
+            QPushButton#btn_led_mode { background-color: #1c1c22; border: 1px solid #3f3f46; border-radius: 6px; padding: 8px; }
+            QPushButton#btn_led_mode:checked { background-color: #ed4e4e; color: white; border: 1px solid #ed4e4e; }
+            QComboBox { background-color: #2a2a32; color: #ffffff; border: 1px solid #3f3f46; border-radius: 6px; padding: 8px; }
+            QComboBox::drop-down { border: none; }
+            QComboBox QAbstractItemView { background-color: #2a2a32; color: #ffffff; selection-background-color: #ed4e4e; border: 1px solid #3f3f46; outline: none; }
+            QCheckBox { font-size: 13px; spacing: 8px; }
+            QCheckBox::indicator { width: 18px; height: 18px; border-radius: 4px; background-color: #2a2a32; border: 1px solid #3f3f46; }
+            QCheckBox::indicator:checked { background-color: #ed4e4e; border: 1px solid #3f3f46; }
         """)
         
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QVBoxLayout(central_widget)
+        main_layout_base = QVBoxLayout(central_widget)
+        main_layout_base.setContentsMargins(10, 10, 10, 10)
         
-        self.connection_banner = QLabel("Protocolo Validado: GameSir Cyclone 2")
-        self.connection_banner.setStyleSheet("color: #00ff66; background-color: #1a3322; padding: 10px; border-radius: 4px; font-weight: bold;")
-        self.connection_banner.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(self.connection_banner)
-
-        self.tabs = QTabWidget()
-        main_layout.addWidget(self.tabs)
-
-        self.learning_target = None 
-
-        self.setup_tab_logs()
-        self.setup_tab_diagnostico()
-        self.setup_tab_iluminacao()
-        self.setup_tab_vibracao()
-        self.setup_tab_mapeamento()
-
-        # Monitorizando 6 eixos (Esq X/Y, Dir X/Y, Gatilho Esq L2, Gatilho Dir R2)
-        self.last_pct = {0: 50, 1: 50, 2: 0, 3: 50, 4: 50, 5: 0}
-        self.fd = None
-        self.evdev_path = None
-        self.evdev_device = None
-        self.active_effect_id = None
+        self.main_container = QFrame()
+        self.main_container.setObjectName("main_container")
+        main_layout = QVBoxLayout(self.main_container)
+        main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
         
-        self.add_log("Sistema funcional completo iniciado.")
-        self.init_hardware()
-
-        self.send_controller_led(self.controller.led_r, self.controller.led_g, self.controller.led_b)
-
-        self.timer = QTimer(self)
-        self.timer.timeout.connect(self.poll_hardware)
-        self.timer.start(16)
-
-    def setup_tab_logs(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        self.log_console = QTextEdit()
-        self.log_console.setReadOnly(True)
-        layout.addWidget(self.log_console)
-        btn_clear = QPushButton("Limpar Logs")
-        btn_clear.setStyleSheet("background-color: #444; color: white; padding: 8px;")
-        btn_clear.clicked.connect(self.log_console.clear)
-        layout.addWidget(btn_clear)
-        self.tabs.addTab(tab, "Logs")
-
-    def add_log(self, message):
-        self.log_console.append(message)
-
-    def setup_tab_diagnostico(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        self.status_label = QLabel("Aguardando input do controlo...")
-        self.status_label.setStyleSheet("color: #aaaaaa; background-color: #2d2d2d; padding: 15px; border-radius: 4px; font-weight: bold;")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.status_label)
+        self.header = QFrame()
+        self.header.setStyleSheet("background-color: #16161b; border-bottom: 1px solid #2a2a32; padding: 10px 20px; border-top-left-radius: 12px; border-top-right-radius: 12px;")
+        self.header.setFixedHeight(60)
+        self.header.mousePressEvent = self.header_mousePressEvent
+        self.header.mouseMoveEvent = self.header_mouseMoveEvent
         
-        # Analógicos
-        sticks_layout = QHBoxLayout()
-        group_l = QGroupBox(" Analógico Esquerdo ")
-        layout_l = QVBoxLayout(group_l)
+        header_layout = QHBoxLayout(self.header)
+        header_layout.setContentsMargins(0,0,0,0)
+        
+        btn_close = QPushButton(); btn_close.setFixedSize(14, 14); btn_close.setStyleSheet("background-color: #ff5f56; border-radius: 7px; border: none;"); btn_close.clicked.connect(self.close)
+        btn_min = QPushButton(); btn_min.setFixedSize(14, 14); btn_min.setStyleSheet("background-color: #ffbd2e; border-radius: 7px; border: none;"); btn_min.clicked.connect(self.showMinimized)
+        btn_max = QPushButton(); btn_max.setFixedSize(14, 14); btn_max.setStyleSheet("background-color: #27c93f; border-radius: 7px; border: none;"); btn_max.clicked.connect(self.toggle_maximize)
+        
+        header_layout.addWidget(btn_close); header_layout.addWidget(btn_min); header_layout.addWidget(btn_max); header_layout.addSpacing(15)
+        header_layout.addWidget(QLabel("🎮 GAMESIR CONNECT")); header_layout.addStretch()
+        
+        self.btn_perfil = QPushButton(self.controller.profile_name)
+        self.btn_perfil.setStyleSheet("background-color: transparent; border: none; border-bottom: 3px solid #ed4e4e; border-radius: 0px; font-size: 14px; padding: 5px 20px; color: #ffffff;")
+        header_layout.addWidget(self.btn_perfil); header_layout.addStretch()
+        
+        self.conn_status = QLabel("🔴 Desconectado"); self.conn_status.setStyleSheet("font-weight: bold; color: #ef4444;")
+        header_layout.addWidget(self.conn_status)
+        main_layout.addWidget(self.header)
+
+        content_layout = QHBoxLayout()
+        self.sidebar = QListWidget()
+        self.sidebar.setFixedWidth(200)
+        self.sidebar.addItems(["🕹️ Dashboard", "ℹ️ Sobre o Projeto"])
+        content_layout.addWidget(self.sidebar)
+
+        self.stack = QStackedWidget()
+        
+        # --- DASHBOARD ---
+        self.dashboard_wrapper = QWidget()
+        dash_layout = QVBoxLayout(self.dashboard_wrapper)
+        dash_layout.setContentsMargins(20, 20, 20, 20)
+
+        center_img_layout = QHBoxLayout()
+        img_lbl = QLabel("CYCLONE 2")
+        img_lbl.setAlignment(Qt.AlignCenter)
+        img_lbl.setStyleSheet("font-size: 20px; font-weight: 900; color: #ffffff; padding: 10px;")
+        center_img_layout.addWidget(img_lbl)
+        dash_layout.addLayout(center_img_layout)
+
+        grid = QGridLayout()
+        grid.setSpacing(15)
+
+        col1_layout = QVBoxLayout()
+        card_luzes, lay_luzes = self.create_card("💡", "Luzes e Predefinições")
+        led_grid = QGridLayout()
+        modos = ["Fluxo", "Arco-íris", "Pulso", "Equilíbrio", "Alarme", "Desativado"]
+        self.led_btns = []
+        r = c = 0
+        for m in modos:
+            btn = QPushButton(m)
+            btn.setObjectName("btn_led_mode")
+            btn.setCheckable(True)
+            if m == self.controller.led_mode: btn.setChecked(True)
+            btn.clicked.connect(lambda checked, mode=m: self.set_led_mode(mode))
+            self.led_btns.append(btn)
+            led_grid.addWidget(btn, r, c)
+            c += 1
+            if c > 1: c = 0; r += 1
+        lay_luzes.addLayout(led_grid)
+        lay_luzes.addSpacing(10)
+        lay_luzes.addWidget(QLabel("Brilho (Efeito futuro)"))
+        self.slider_brilho = QSlider(Qt.Horizontal); self.slider_brilho.setRange(0, 100); self.slider_brilho.setValue(self.controller.led_brightness)
+        lay_luzes.addWidget(self.slider_brilho)
+        lay_luzes.addWidget(QLabel("Velocidade (Efeito futuro)"))
+        self.slider_vel = QSlider(Qt.Horizontal); self.slider_vel.setRange(0, 100); self.slider_vel.setValue(self.controller.led_speed)
+        lay_luzes.addWidget(self.slider_vel)
+        btn_cor = QPushButton("Aplicar Cor Sólida no Comando"); btn_cor.clicked.connect(self.open_color_picker)
+        lay_luzes.addWidget(btn_cor)
+        col1_layout.addWidget(card_luzes)
+        
+        card_vib, lay_vib = self.create_card("📳", "Motores de Vibração")
+        lay_vib.addWidget(QLabel("Motor Pesado (Esq)")); self.slider_strong = QSlider(Qt.Horizontal); self.slider_strong.setRange(0, 100); self.slider_strong.setValue(self.controller.vib_strong); lay_vib.addWidget(self.slider_strong)
+        lay_vib.addWidget(QLabel("Motor Leve (Dir)")); self.slider_weak = QSlider(Qt.Horizontal); self.slider_weak.setRange(0, 100); self.slider_weak.setValue(self.controller.vib_weak); lay_vib.addWidget(self.slider_weak)
+        btn_test = QPushButton("Testar Vibração"); btn_test.setObjectName("btn_accent"); btn_test.clicked.connect(self.trigger_rumble_test)
+        lay_vib.addWidget(btn_test)
+        col1_layout.addWidget(card_vib)
+
+        card_sticks, lay_sticks = self.create_card("🕹️", "Sticks (Analógicos)")
+        lay_sticks.addWidget(QLabel("Analógico Esquerdo (L3)"))
         self.bar_lx = QProgressBar(); self.bar_lx.setRange(0, 100); self.bar_lx.setValue(50)
         self.bar_ly = QProgressBar(); self.bar_ly.setRange(0, 100); self.bar_ly.setValue(50)
-        self.bar_lx.setStyleSheet("QProgressBar::chunk { background-color: #00ff66; }")
-        self.bar_ly.setStyleSheet("QProgressBar::chunk { background-color: #00ff66; }")
-        layout_l.addWidget(QLabel("Eixo X:")); layout_l.addWidget(self.bar_lx)
-        layout_l.addWidget(QLabel("Eixo Y:")); layout_l.addWidget(self.bar_ly)
-        sticks_layout.addWidget(group_l)
-        
-        group_r = QGroupBox(" Analógico Direito ")
-        layout_r = QVBoxLayout(group_r)
+        lay_sticks.addWidget(self.bar_lx); lay_sticks.addWidget(self.bar_ly)
+        lay_sticks.addSpacing(20)
+        lay_sticks.addWidget(QLabel("Analógico Direito (R3)"))
         self.bar_rx = QProgressBar(); self.bar_rx.setRange(0, 100); self.bar_rx.setValue(50)
         self.bar_ry = QProgressBar(); self.bar_ry.setRange(0, 100); self.bar_ry.setValue(50)
-        self.bar_rx.setStyleSheet("QProgressBar::chunk { background-color: #00ff66; }")
-        self.bar_ry.setStyleSheet("QProgressBar::chunk { background-color: #00ff66; }")
-        layout_r.addWidget(QLabel("Eixo X:")); layout_r.addWidget(self.bar_rx)
-        layout_r.addWidget(QLabel("Eixo Y:")); layout_r.addWidget(self.bar_ry)
-        sticks_layout.addWidget(group_r)
-        layout.addLayout(sticks_layout)
-
-        # Gatilhos Traseiros L2 / R2
-        group_trig = QGroupBox(" Gatilhos Traseiros Analógicos (L2 / R2) ")
-        layout_trig = QVBoxLayout(group_trig)
+        lay_sticks.addWidget(self.bar_rx); lay_sticks.addWidget(self.bar_ry)
+        lay_sticks.addStretch()
+        
+        col3_layout = QVBoxLayout()
+        card_gatilhos, lay_gatilhos = self.create_card("📐", "Gatilhos")
         self.bar_l2 = QProgressBar(); self.bar_l2.setRange(0, 100); self.bar_l2.setValue(0)
         self.bar_r2 = QProgressBar(); self.bar_r2.setRange(0, 100); self.bar_r2.setValue(0)
-        self.bar_l2.setStyleSheet("QProgressBar::chunk { background-color: #00aaff; }")
-        self.bar_r2.setStyleSheet("QProgressBar::chunk { background-color: #00aaff; }")
-        layout_trig.addWidget(QLabel("L2 / LT (Esquerdo):")); layout_trig.addWidget(self.bar_l2)
-        layout_trig.addWidget(QLabel("R2 / RT (Direito):")); layout_trig.addWidget(self.bar_r2)
-        layout.addWidget(group_trig)
-
-        self.tabs.addTab(tab, "Diagnóstico")
-
-    def setup_tab_iluminacao(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+        lay_gatilhos.addWidget(QLabel("LT (Esquerdo)")); lay_gatilhos.addWidget(self.bar_l2)
+        lay_gatilhos.addWidget(QLabel("RT (Direito)")); lay_gatilhos.addWidget(self.bar_r2)
+        col3_layout.addWidget(card_gatilhos)
         
-        self.color_preview = QLabel(f"Cor Ativa: R({self.controller.led_r}) G({self.controller.led_g}) B({self.controller.led_b})")
-        self.update_color_preview_style()
-        self.color_preview.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.color_preview)
+        card_map, lay_map = self.create_card("⚙️", "Botões Traseiros e Atalhos")
+        lbl_m1 = QLabel("M1 (Esq)"); self.led_m1 = QLabel("⚫")
+        btn_learn_m1 = QPushButton("🎯"); btn_learn_m1.setToolTip("Capturar Botão"); btn_learn_m1.clicked.connect(lambda: self.start_learning('m1'))
+        row_m1 = QHBoxLayout(); row_m1.addWidget(lbl_m1); row_m1.addWidget(self.led_m1); row_m1.addStretch(); row_m1.addWidget(btn_learn_m1)
+        lay_map.addLayout(row_m1)
+        
+        self.combo_m1 = QComboBox()
+        for bid, bname in BUTTON_NAMES.items(): self.combo_m1.addItem(bname, bid)
+        idx_m1 = self.combo_m1.findData(self.controller.mappings.get("m1_button_id", 2))
+        if idx_m1 >= 0: self.combo_m1.setCurrentIndex(idx_m1)
+        lay_map.addWidget(self.combo_m1)
+        lay_map.addSpacing(10)
 
-        btn_pick_color = QPushButton("Selecionar Cor Personalizada")
-        btn_pick_color.setStyleSheet("background-color: #0055ff; color: white; font-weight: bold; padding: 14px; border-radius: 4px; font-size: 14px;")
-        btn_pick_color.clicked.connect(self.open_color_picker)
-        layout.addWidget(btn_pick_color)
+        lbl_m2 = QLabel("M2 (Dir)"); self.led_m2 = QLabel("⚫")
+        btn_learn_m2 = QPushButton("🎯"); btn_learn_m2.setToolTip("Capturar Botão"); btn_learn_m2.clicked.connect(lambda: self.start_learning('m2'))
+        row_m2 = QHBoxLayout(); row_m2.addWidget(lbl_m2); row_m2.addWidget(self.led_m2); row_m2.addStretch(); row_m2.addWidget(btn_learn_m2)
+        lay_map.addLayout(row_m2)
+        
+        self.combo_m2 = QComboBox()
+        for bid, bname in BUTTON_NAMES.items(): self.combo_m2.addItem(bname, bid)
+        idx_m2 = self.combo_m2.findData(self.controller.mappings.get("m2_button_id", 1))
+        if idx_m2 >= 0: self.combo_m2.setCurrentIndex(idx_m2)
+        lay_map.addWidget(self.combo_m2)
+        
+        self.chk_hair = QCheckBox("Modo Gatilho Ultrasensível"); self.chk_hair.setChecked(self.controller.mappings.get("hair_triggers", False))
+        self.chk_swap = QCheckBox("Alternar para layout Switch"); self.chk_swap.setChecked(self.controller.mappings.get("swap_ab_xy", False))
+        lay_map.addSpacing(10)
+        lay_map.addWidget(self.chk_hair); lay_map.addWidget(self.chk_swap)
+        col3_layout.addWidget(card_map)
 
-        group_presets = QGroupBox(" Atalhos Rápidos ")
-        preset_layout = QHBoxLayout(group_presets)
+        grid.addLayout(col1_layout, 0, 0); grid.addWidget(card_sticks, 0, 1); grid.addLayout(col3_layout, 0, 2)
+        grid.setColumnStretch(0, 1); grid.setColumnStretch(1, 1); grid.setColumnStretch(2, 1)
+        dash_layout.addLayout(grid)
 
-        presets = [
-            ("Verde", 0, 255, 0, "#008800"),
-            ("Ciano", 0, 255, 255, "#008888"),
-            ("Azul", 0, 100, 255, "#0055bb"),
-            ("Vermelho", 255, 0, 0, "#880000"),
-            ("Roxo", 180, 0, 255, "#660088"),
-            ("Desligar", 0, 0, 0, "#333333")
-        ]
+        bottom_bar = QHBoxLayout()
+        self.log_lbl = QLabel("Aguardando telemetria...")
+        self.log_lbl.setStyleSheet("color: #a1a1aa; font-family: monospace;")
+        btn_save = QPushButton("💾 Gravar no Comando (EEPROM)")
+        btn_save.setObjectName("btn_accent")
+        btn_save.setFixedWidth(300)
+        btn_save.clicked.connect(self.save_all)
+        bottom_bar.addWidget(self.log_lbl); bottom_bar.addStretch(); bottom_bar.addWidget(btn_save)
+        dash_layout.addLayout(bottom_bar)
+        
+        self.stack.addWidget(self.dashboard_wrapper)
+        
+        # --- SOBRE TELA ---
+        self.about_wrapper = QWidget()
+        about_layout = QVBoxLayout(self.about_wrapper)
+        about_layout.setAlignment(Qt.AlignCenter)
+        
+        logo_path = "/app/bin/logo.jpeg" if os.path.exists("/app/bin/logo.jpeg") else "logo.jpeg"
+        if os.path.exists(logo_path):
+            logo_lbl = QLabel()
+            pixmap = QPixmap(logo_path).scaled(180, 180, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            logo_lbl.setPixmap(pixmap)
+            logo_lbl.setAlignment(Qt.AlignCenter)
+            about_layout.addWidget(logo_lbl)
+            
+        dev_title = QLabel("GameSir Connect - Linux Edition")
+        dev_title.setStyleSheet("font-size: 28px; font-weight: bold; color: #ffffff;")
+        dev_title.setAlignment(Qt.AlignCenter)
+        
+        dev_info = QLabel("Desenvolvido por: Diotec Software (Dionísio Luís)\nVersão: 0.9.5 Beta\n\nSoftware de Engenharia Reversa para Comandos GameSir no Linux.")
+        dev_info.setAlignment(Qt.AlignCenter)
+        dev_info.setStyleSheet("font-size: 16px; color: #a1a1aa; margin-top: 10px;")
+        
+        compat_info = QLabel("Compatibilidade Atual: GameSir Cyclone 2.\nO seu modelo funcionou? Encontrou algum bug?\nRelate em: diotec.soft@gmail.com")
+        compat_info.setAlignment(Qt.AlignCenter)
+        compat_info.setStyleSheet("font-size: 14px; color: #34d399; margin-bottom: 20px;")
+        
+        donate_lbl = QLabel("Apoie o desenvolvimento contínuo deste projeto (PIX):")
+        donate_lbl.setAlignment(Qt.AlignCenter)
+        donate_lbl.setStyleSheet("font-weight: bold; color: #ffffff;")
+        
+        qr_path = "/app/bin/chave.png" if os.path.exists("/app/bin/chave.png") else "chave.png"
+        if os.path.exists(qr_path):
+            qr_lbl = QLabel()
+            qr_pixmap = QPixmap(qr_path).scaled(150, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            qr_lbl.setPixmap(qr_pixmap)
+            qr_lbl.setAlignment(Qt.AlignCenter)
+            about_layout.addWidget(qr_lbl)
+            
+        btn_donate = QPushButton("📋 Copiar Chave PIX (a6e35576-02ec-4f43-a243-3e65ee8e9c3d)")
+        btn_donate.setObjectName("btn_accent")
+        btn_donate.setFixedWidth(450)
+        btn_donate.clicked.connect(self.copy_pix)
+        
+        about_layout.addWidget(dev_title); about_layout.addWidget(dev_info); about_layout.addWidget(compat_info)
+        about_layout.addWidget(donate_lbl); about_layout.addWidget(btn_donate, alignment=Qt.AlignCenter)
+        self.stack.addWidget(self.about_wrapper)
 
-        for name, r, g, b, color_hex in presets:
-            btn = QPushButton(name)
-            btn.setStyleSheet(f"background-color: {color_hex}; color: white; font-weight: bold; padding: 12px; border-radius: 4px;")
-            btn.clicked.connect(lambda checked, red=r, green=g, blue=b: self.send_controller_led(red, green, blue))
-            preset_layout.addWidget(btn)
+        self.sidebar.currentRowChanged.connect(self.stack.setCurrentIndex)
+        content_layout.addWidget(self.stack)
+        main_layout.addLayout(content_layout)
+        main_layout_base.addWidget(self.main_container)
 
-        layout.addWidget(group_presets)
-        self.tabs.addTab(tab, "Iluminação")
+        self.last_pct = {0: 50, 1: 50, 2: 0, 3: 50, 4: 50, 5: 0}
+        self.fd = None; self.hid_fd = None; self.evdev_device = None; self.active_effect_id = None
+        self.init_hardware()
+        self.timer = QTimer(self); self.timer.timeout.connect(self.poll_hardware); self.timer.start(16)
 
-    def update_color_preview_style(self):
-        r, g, b = self.controller.led_r, self.controller.led_g, self.controller.led_b
-        lum = (0.299 * r + 0.587 * g + 0.114 * b)
-        text_color = "#000000" if lum > 140 else "#ffffff"
-        self.color_preview.setText(f"Cor Ativa: R({r}) G({g}) B({b})")
-        self.color_preview.setStyleSheet(f"background-color: rgb({r}, {g}, {b}); color: {text_color}; padding: 16px; border-radius: 6px; font-weight: bold; font-size: 14px; border: 1px solid #555;")
+    def header_mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton: self.old_pos = event.globalPosition().toPoint()
+
+    def header_mouseMoveEvent(self, event):
+        if self.old_pos:
+            delta = QPoint(event.globalPosition().toPoint() - self.old_pos)
+            self.move(self.x() + delta.x(), self.y() + delta.y())
+            self.old_pos = event.globalPosition().toPoint()
+
+    def toggle_maximize(self):
+        if self.isMaximized(): self.showNormal()
+        else: self.showMaximized()
+
+    def set_led_mode(self, mode):
+        for btn in self.led_btns: btn.setChecked(btn.text() == mode)
+        self.controller.led_mode = mode
+        self.add_log(f"Modo de LED selecionado: {mode} (Sólido requer escolha de cor)", True)
 
     def open_color_picker(self):
-        initial = QColor(self.controller.led_r, self.controller.led_g, self.controller.led_b)
-        color = QColorDialog.getColor(initial, self, "Escolher Cor dos LEDs do Cyclone 2")
-        if color.isValid():
-            self.send_controller_led(color.red(), color.green(), color.blue())
+        c = QColorDialog.getColor(QColor(self.controller.led_r, self.controller.led_g, self.controller.led_b), self, "Cor dos LEDs")
+        if c.isValid(): self.send_controller_led(c.red(), c.green(), c.blue())
 
-    def get_gamesir_node(self):
+    def create_card(self, icon, title):
+        frame = QFrame()
+        frame.setObjectName("card")
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(15, 15, 15, 15)
+        layout.setSpacing(10)
+        header = QHBoxLayout()
+        header.addWidget(QLabel(icon)); header.addWidget(QLabel(title, objectName="card_title")); header.addStretch()
+        layout.addLayout(header)
+        div = QFrame(); div.setFixedHeight(1); div.setStyleSheet("background-color: #2a2a32;")
+        layout.addWidget(div)
+        return frame, layout
+
+    def copy_pix(self):
+        QApplication.clipboard().setText("a6e35576-02ec-4f43-a243-3e65ee8e9c3d")
+        self.add_log("Chave PIX copiada para a área de transferência! Obrigado pelo apoio.", True)
+
+    def add_log(self, message, is_success=False):
+        if hasattr(self, 'log_lbl'):
+            color = "#34d399" if is_success else "#a1a1aa"
+            self.log_lbl.setStyleSheet(f"color: {color}; font-family: monospace; font-weight: bold;")
+            self.log_lbl.setText(f"> {message}")
+
+    def start_learning(self, target):
+        self.learning_target = target
+        self.log_lbl.setStyleSheet("color: #ffbd2e; font-family: monospace; font-weight: bold;")
+        self.log_lbl.setText(f"> AGUARDANDO: Pressione o botão para associar à pá {target.upper()}...")
+
+    def get_gamesir_nodes(self):
+        nodes = []
         for node in sorted(glob.glob('/dev/hidraw*')):
             base = os.path.basename(node)
             uevent_path = f"/sys/class/hidraw/{base}/device/uevent"
@@ -308,234 +409,80 @@ class MainWindow(QMainWindow):
                 try:
                     with open(uevent_path, 'r') as f:
                         txt = f.read().lower()
-                        if '054c' in txt or 'chicken run' in txt or 'gamesir' in txt:
-                            return node
-                except Exception:
-                    pass
-        return '/dev/hidraw1' if os.path.exists('/dev/hidraw1') else None
+                        if 'gamesir' in txt or '054c' in txt or 'chicken' in txt: nodes.append(node)
+                except: pass
+        return nodes if nodes else (['/dev/hidraw1'] if os.path.exists('/dev/hidraw1') else [])
 
-    def send_controller_led(self, r, g, b, weak_motor=0, strong_motor=0, update_rumble=False):
-        self.controller.led_r = r
-        self.controller.led_g = g
-        self.controller.led_b = b
-        self.update_color_preview_style()
+    def send_hardware_mapping(self, m1_id, m2_id):
+        targets = self.get_gamesir_nodes()
+        if not targets: return False
+        success = False
+        for target in targets:
+            try:
+                payload = bytearray([0x03, 0x18, 0x01, m1_id & 0xFF, m2_id & 0xFF]) + bytearray([0x00] * 63)
+                crc = zlib.crc32(payload) & 0xFFFFFFFF
+                report = payload + struct.pack('<I', crc)
+                with open(target, 'wb') as f:
+                    f.write(report)
+                    f.flush()
+                success = True
+            except: pass
+        return success
 
-        target = self.get_gamesir_node()
-        if not target:
-            return
-
-        report = bytearray(64)
-        report[0] = 0x05
-        report[1] = 0x03 if update_rumble else 0x02
-        report[2] = 0x04
-        report[4] = weak_motor
-        report[5] = strong_motor
-        report[6] = r
-        report[7] = g
-        report[8] = b
-        report[9] = 0x00
-        report[10] = 0x00
-
-        try:
-            with open(target, 'wb') as f:
-                f.write(report)
-                f.flush()
-        except Exception:
-            pass
-
-    def setup_tab_vibracao(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
+    def save_all(self):
+        self.controller.vib_strong = self.slider_strong.value()
+        self.controller.vib_weak = self.slider_weak.value()
+        self.controller.led_brightness = self.slider_brilho.value()
+        self.controller.led_speed = self.slider_vel.value()
+        self.controller.mappings["m1_button_id"] = self.combo_m1.currentData()
+        self.controller.mappings["m2_button_id"] = self.combo_m2.currentData()
+        self.controller.mappings["hair_triggers"] = self.chk_hair.isChecked()
+        self.controller.mappings["swap_ab_xy"] = self.chk_swap.isChecked()
         
-        self.vib_status_label = QLabel("Intensidade dos Motores de Vibração")
-        self.vib_status_label.setStyleSheet("color: #aaaaaa; background-color: #2d2d2d; padding: 15px; border-radius: 4px; font-weight: bold;")
-        self.vib_status_label.setAlignment(Qt.AlignCenter)
-        layout.addWidget(self.vib_status_label)
+        json_ok = self.controller.save_profile()
+        hw_ok = self.send_hardware_mapping(self.combo_m1.currentData(), self.combo_m2.currentData())
+        
+        if json_ok and hw_ok:
+            self.add_log("Perfil gravado com sucesso no JSON e na EEPROM do Hardware!", True)
+        elif json_ok:
+            self.add_log("Perfil gravado (JSON OK, mas sem resposta de Hardware EEPROM).", True)
+        else:
+            self.add_log("Erro ao gravar perfil.", False)
 
-        # Slider Motor Forte (Esquerdo)
-        group_strong = QGroupBox(" Motor Forte / Pesado (Punho Esquerdo) ")
-        layout_strong = QVBoxLayout(group_strong)
-        self.lbl_strong_val = QLabel(f"{self.controller.vib_strong}%")
-        self.lbl_strong_val.setAlignment(Qt.AlignCenter)
-        self.slider_strong = QSlider(Qt.Horizontal)
-        self.slider_strong.setRange(0, 100)
-        self.slider_strong.setValue(self.controller.vib_strong)
-        self.slider_strong.valueChanged.connect(self.update_vib_strong)
-        layout_strong.addWidget(self.lbl_strong_val)
-        layout_strong.addWidget(self.slider_strong)
-        layout.addWidget(group_strong)
-
-        # Slider Motor Fraco (Direito)
-        group_weak = QGroupBox(" Motor Fraco / Leve (Punho Direito) ")
-        layout_weak = QVBoxLayout(group_weak)
-        self.lbl_weak_val = QLabel(f"{self.controller.vib_weak}%")
-        self.lbl_weak_val.setAlignment(Qt.AlignCenter)
-        self.slider_weak = QSlider(Qt.Horizontal)
-        self.slider_weak.setRange(0, 100)
-        self.slider_weak.setValue(self.controller.vib_weak)
-        self.slider_weak.valueChanged.connect(self.update_vib_weak)
-        layout_weak.addWidget(self.lbl_weak_val)
-        layout_weak.addWidget(self.slider_weak)
-        layout.addWidget(group_weak)
-
-        btn_test_rumble = QPushButton("Executar Teste de Vibração com Valores Atuais")
-        btn_test_rumble.setStyleSheet("QPushButton { background-color: #aa00ff; color: white; font-weight: bold; padding: 18px; border-radius: 4px; font-size: 14px; }")
-        btn_test_rumble.clicked.connect(self.trigger_rumble_test)
-        layout.addWidget(btn_test_rumble)
-
-        self.tabs.addTab(tab, "Vibração")
-
-    def update_vib_strong(self, val):
-        self.controller.vib_strong = val
-        self.lbl_strong_val.setText(f"{val}%")
-
-    def update_vib_weak(self, val):
-        self.controller.vib_weak = val
-        self.lbl_weak_val.setText(f"{val}%")
+    def send_controller_led(self, r, g, b, weak=0, strong=0, update_rumble=False):
+        self.controller.led_r = r; self.controller.led_g = g; self.controller.led_b = b
+        targets = self.get_gamesir_nodes()
+        if not targets: return
+        report = bytearray(64)
+        report[0] = 0x05; report[1] = 0x03 if update_rumble else 0x02; report[2] = 0x04
+        report[4] = weak; report[5] = strong; report[6] = r; report[7] = g; report[8] = b
+        for target in targets:
+            try:
+                with open(target, 'wb') as f: f.write(report); f.flush()
+            except: pass
 
     def trigger_rumble_test(self):
-        strong_val = int(65535 * (self.controller.vib_strong / 100.0))
-        weak_val = int(65535 * (self.controller.vib_weak / 100.0))
-        
-        evdev_ok = False
-        if EVDEV_AVAILABLE:
-            if not self.evdev_device:
-                self.init_hardware()
-            if self.evdev_device:
-                try:
-                    rumble = ff.Rumble(strong_magnitude=strong_val, weak_magnitude=weak_val)
-                    effect_type = ff.EffectType(ff_rumble_effect=rumble)
-                    effect = ff.Effect(ecodes.FF_RUMBLE, -1, 0, ff.Trigger(0, 0), ff.Replay(1500, 0), effect_type)
-                    if self.active_effect_id is not None:
-                        try:
-                            self.evdev_device.erase_effect(self.active_effect_id)
-                        except Exception: pass
-                    self.active_effect_id = self.evdev_device.upload_effect(effect)
-                    self.evdev_device.write(ecodes.EV_FF, self.active_effect_id, 1)
-                    evdev_ok = True
-                except Exception as e:
-                    pass
-
-        # Falback HID (escala de 0-255)
-        strong_hid = int(255 * (self.controller.vib_strong / 100.0))
-        weak_hid = int(255 * (self.controller.vib_weak / 100.0))
-        
-        self.send_controller_led(self.controller.led_r, self.controller.led_g, self.controller.led_b, weak_motor=weak_hid, strong_motor=strong_hid, update_rumble=True)
-        QTimer.singleShot(1500, lambda: self.send_controller_led(
-            self.controller.led_r, self.controller.led_g, self.controller.led_b, weak_motor=0, strong_motor=0, update_rumble=True
-        ))
-        self.add_log(f"Teste de Vibração enviado! (Forte: {self.controller.vib_strong}%, Fraco: {self.controller.vib_weak}%)")
-
-    def setup_tab_mapeamento(self):
-        tab = QWidget()
-        layout = QVBoxLayout(tab)
-        
-        # Mapeamento Global & Swaps
-        group_global = QGroupBox(" Funcionalidades Globais ")
-        form_global = QFormLayout(group_global)
-        
-        self.chk_swap_abxy = QCheckBox("Trocar A/B e X/Y (Layout estilo Nintendo Switch)")
-        self.chk_swap_abxy.setChecked(self.controller.mappings.get("swap_ab_xy", False))
-        self.chk_swap_abxy.stateChanged.connect(lambda v: self.controller.mappings.update({"swap_ab_xy": bool(v)}))
-        
-        self.chk_hair = QCheckBox("Modo Hair Trigger (Gatilhos rápidos por software)")
-        self.chk_hair.setChecked(self.controller.mappings.get("hair_triggers", False))
-        self.chk_hair.stateChanged.connect(lambda v: self.controller.mappings.update({"hair_triggers": bool(v)}))
-        
-        form_global.addRow(self.chk_swap_abxy)
-        form_global.addRow(self.chk_hair)
-        layout.addWidget(group_global)
-
-        group_rear = QGroupBox(" Botões Traseiros (M1 / M2) e Monitor ")
-        rear_layout = QVBoxLayout(group_rear)
-
-        self.lbl_last_btn = QLabel("Último evento: Nenhum")
-        self.lbl_last_btn.setStyleSheet("background-color: #111; color: #00ff66; padding: 10px; border-radius: 4px; font-weight: bold; border: 1px solid #333;")
-        self.lbl_last_btn.setAlignment(Qt.AlignCenter)
-        rear_layout.addWidget(self.lbl_last_btn)
-        
-        live_layout = QHBoxLayout()
-        self.lbl_m1_state = QLabel("M1 (Esq): SOLTO")
-        self.lbl_m1_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 12px; border-radius: 4px; font-weight: bold;")
-        self.lbl_m1_state.setAlignment(Qt.AlignCenter)
-        
-        self.lbl_m2_state = QLabel("M2 (Dir): SOLTO")
-        self.lbl_m2_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 12px; border-radius: 4px; font-weight: bold;")
-        self.lbl_m2_state.setAlignment(Qt.AlignCenter)
-        
-        live_layout.addWidget(self.lbl_m1_state)
-        live_layout.addWidget(self.lbl_m2_state)
-        rear_layout.addLayout(live_layout)
-
-        learn_layout = QHBoxLayout()
-        self.btn_learn_m1 = QPushButton("Capturar Botão M1")
-        self.btn_learn_m1.setStyleSheet("background-color: #444; color: white; padding: 8px; font-weight: bold; border-radius: 4px;")
-        self.btn_learn_m1.clicked.connect(lambda: self.start_learning('m1'))
-
-        self.btn_learn_m2 = QPushButton("Capturar Botão M2")
-        self.btn_learn_m2.setStyleSheet("background-color: #444; color: white; padding: 8px; font-weight: bold; border-radius: 4px;")
-        self.btn_learn_m2.clicked.connect(lambda: self.start_learning('m2'))
-
-        learn_layout.addWidget(self.btn_learn_m1)
-        learn_layout.addWidget(self.btn_learn_m2)
-        rear_layout.addLayout(learn_layout)
-
-        map_form = QFormLayout()
-        self.combo_m1 = QComboBox()
-        self.combo_m2 = QComboBox()
-        for bid, bname in BUTTON_NAMES.items():
-            self.combo_m1.addItem(bname, bid)
-            self.combo_m2.addItem(bname, bid)
-            
-        idx_m1 = self.combo_m1.findData(self.controller.mappings.get("m1_button_id", 2))
-        if idx_m1 >= 0: self.combo_m1.setCurrentIndex(idx_m1)
-        idx_m2 = self.combo_m2.findData(self.controller.mappings.get("m2_button_id", 1))
-        if idx_m2 >= 0: self.combo_m2.setCurrentIndex(idx_m2)
-        
-        self.combo_m1.currentIndexChanged.connect(lambda: self.controller.mappings.update({"m1_button_id": self.combo_m1.currentData()}))
-        self.combo_m2.currentIndexChanged.connect(lambda: self.controller.mappings.update({"m2_button_id": self.combo_m2.currentData()}))
-
-        map_form.addRow("Atribuição M1 (Mão Esquerda):", self.combo_m1)
-        map_form.addRow("Atribuição M2 (Mão Direita):", self.combo_m2)
-        rear_layout.addLayout(map_form)
-        
-        layout.addWidget(group_rear)
-        
-        btn_save = QPushButton("Gravar Perfil Completo em JSON")
-        btn_save.setStyleSheet("background-color: #00aa55; color: white; font-weight: bold; padding: 12px; border-radius: 4px;")
-        btn_save.clicked.connect(lambda: self.add_log("Perfil gravado com sucesso!") if self.controller.save_profile() else self.add_log("[ERRO] Falha ao gravar perfil."))
-        layout.addWidget(btn_save)
-        
-        self.tabs.addTab(tab, "Mapeamento")
-
-    def start_learning(self, target):
-        self.learning_target = target
-        self.lbl_last_btn.setText(f"AGUARDANDO: Pressione a pá {target.upper()}...")
-        self.lbl_last_btn.setStyleSheet("background-color: #aa5500; color: white; padding: 10px; border-radius: 4px; font-weight: bold;")
+        sv = int(65535 * (self.slider_strong.value() / 100.0))
+        wv = int(65535 * (self.slider_weak.value() / 100.0))
+        if EVDEV_AVAILABLE and self.evdev_device:
+            try:
+                rumble = ff.Rumble(strong_magnitude=sv, weak_magnitude=wv)
+                eff = ff.Effect(ecodes.FF_RUMBLE, -1, 0, ff.Trigger(0, 0), ff.Replay(1500, 0), ff.EffectType(ff_rumble_effect=rumble))
+                if self.active_effect_id is not None:
+                    try: self.evdev_device.erase_effect(self.active_effect_id)
+                    except: pass
+                self.active_effect_id = self.evdev_device.upload_effect(eff)
+                self.evdev_device.write(ecodes.EV_FF, self.active_effect_id, 1)
+            except: pass
+        self.send_controller_led(self.controller.led_r, self.controller.led_g, self.controller.led_b, weak=int(255*(self.slider_weak.value()/100)), strong=int(255*(self.slider_strong.value()/100)), update_rumble=True)
+        QTimer.singleShot(1500, lambda: self.send_controller_led(self.controller.led_r, self.controller.led_g, self.controller.led_b, weak=0, strong=0, update_rumble=True))
+        self.add_log("Teste de vibração acionado.", True)
 
     def init_hardware(self):
-        paths = ['/dev/input/js0', '/dev/input/js1', '/dev/input/js2']
-        device_path = next((p for p in paths if os.path.exists(p)), None)
-        if device_path and not self.fd:
-            try:
-                self.fd = open(device_path, 'rb')
-                os.set_blocking(self.fd.fileno(), False)
-            except Exception:
-                pass
-
-        if EVDEV_AVAILABLE:
-            try:
-                for dname in list_devices():
-                    dev = InputDevice(dname)
-                    if 'wireless controller' in dev.name.lower() or 'gamesir' in dev.name.lower():
-                        if ecodes.EV_FF in dev.capabilities():
-                            self.evdev_path = dev.path
-                            self.evdev_device = dev
-                            break
-            except Exception:
-                pass
+        self.poll_hardware()
 
     def poll_hardware(self):
+        # 1. Conexão Evdev / JS0
         if not self.fd:
             paths = ['/dev/input/js0', '/dev/input/js1', '/dev/input/js2']
             device_path = next((p for p in paths if os.path.exists(p)), None)
@@ -543,49 +490,102 @@ class MainWindow(QMainWindow):
                 try:
                     self.fd = open(device_path, 'rb')
                     os.set_blocking(self.fd.fileno(), False)
-                except Exception:
-                    pass
-            return
+                    self.conn_status.setText("🟢 Cyclone 2 (Ativo)")
+                    self.conn_status.setStyleSheet("font-weight: bold; color: #34d399;")
+                    self.add_log("Comando reconhecido e sincronizado.", True)
+                    self.send_controller_led(self.controller.led_r, self.controller.led_g, self.controller.led_b)
+                    
+                    if EVDEV_AVAILABLE:
+                        for dname in list_devices():
+                            dev = InputDevice(dname)
+                            if 'wireless controller' in dev.name.lower() or 'gamesir' in dev.name.lower():
+                                if ecodes.EV_FF in dev.capabilities(): self.evdev_device = dev; break
+                except Exception: pass
+            else:
+                if self.conn_status.text() != "🔴 Desconectado":
+                    self.conn_status.setText("🔴 Desconectado")
+                    self.conn_status.setStyleSheet("font-weight: bold; color: #ef4444;")
+                return
 
+        # 2. Conexão HIDRAW (M1/M2 nativos)
+        if not self.hid_fd:
+            nodes = self.get_gamesir_nodes()
+            for node in nodes:
+                try:
+                    self.hid_fd = open(node, 'rb')
+                    os.set_blocking(self.hid_fd.fileno(), False)
+                    break
+                except Exception: pass
+
+        # Processar HIDRAW (Nativo)
+        if self.hid_fd:
+            try:
+                hid_data = self.hid_fd.read(64)
+                if hid_data == b'':
+                    raise OSError("HID Desconectado")
+                if hid_data and len(hid_data) > 6:
+                    b5 = hid_data[5]
+                    b6 = hid_data[6]
+                    m1_pressed = bool(b5 & 0x10) or bool(b6 & 0x01)
+                    m2_pressed = bool(b5 & 0x20) or bool(b6 & 0x02)
+                    
+                    if m1_pressed: 
+                        self.led_m1.setText("🟢")
+                        self.add_log("M1 acionado (Modo Físico)!", True)
+                    elif not m1_pressed and self.led_m1.text() == "🟢":
+                        self.led_m1.setText("⚫")
+                        
+                    if m2_pressed: 
+                        self.led_m2.setText("🟢")
+                        self.add_log("M2 acionado (Modo Físico)!", True)
+                    elif not m2_pressed and self.led_m2.text() == "🟢":
+                        self.led_m2.setText("⚫")
+            except (BlockingIOError, struct.error):
+                pass
+            except OSError:
+                if self.hid_fd: self.hid_fd.close()
+                self.hid_fd = None
+
+        # Processar JS0 (Tradicional)
         fn_format = 'IhBB'
         event_size = struct.calcsize(fn_format)
         gui_needs_update = False
         
         try:
             while True:
-                event = self.fd.read(event_size)
-                if not event or len(event) < event_size:
-                    break
-                time_val, value, ev_type, number = struct.unpack(fn_format, event)
+                try:
+                    event = self.fd.read(event_size)
+                except BlockingIOError:
+                    break 
                 
-                if ev_type & 0x80:
-                    continue
+                if event == b'':
+                    raise OSError("Cabo Desconectado")
+                if event is None or len(event) < event_size:
+                    break
+                
+                time_val, value, ev_type, number = struct.unpack(fn_format, event)
+                if ev_type & 0x80: continue
                 
                 if ev_type == 2:
-                    # Analógicos
                     if number in [0, 1, 3, 4]:
                         dz = self.controller.DEADZONE_L_X if number in [0, 1] else self.controller.DEADZONE_R_X
                         f = self.controller.apply_deadzone(value, dz)
                         pct = int(((f + 32767) / 65534) * 100)
                         if self.last_pct[number] != pct:
-                            self.last_pct[number] = pct
-                            gui_needs_update = True
-                    # Gatilhos L2 (2) / R2 (5)
+                            self.last_pct[number] = pct; gui_needs_update = True
                     elif number in [2, 5]:
                         pct = int(((value + 32767) / 65534) * 100)
                         if self.last_pct[number] != pct:
-                            self.last_pct[number] = pct
-                            gui_needs_update = True
-                        
+                            self.last_pct[number] = pct; gui_needs_update = True
+                            
                 elif ev_type == 1:
-                    bname = BUTTON_NAMES.get(number, f"Botão ID {number}")
-                    state_txt = "PRESSIONADO" if value == 1 else "SOLTO"
-                    self.lbl_last_btn.setText(f"Evento recebido: {bname} -> {state_txt}")
-                    self.lbl_last_btn.setStyleSheet("background-color: #111; color: #00ff66; padding: 10px; border-radius: 4px; font-weight: bold; border: 1px solid #333;")
+                    bname = BUTTON_NAMES.get(number, f"B{number}")
+                    st = "Pressionado" if value == 1 else "Solto"
+                    self.add_log(f"Input: {bname} -> {st}")
 
                     if self.learning_target and value == 1:
                         if number not in BUTTON_NAMES:
-                            BUTTON_NAMES[number] = f"Botão ID {number}"
+                            BUTTON_NAMES[number] = f"B{number}"
                             self.combo_m1.addItem(BUTTON_NAMES[number], number)
                             self.combo_m2.addItem(BUTTON_NAMES[number], number)
 
@@ -597,41 +597,27 @@ class MainWindow(QMainWindow):
                             self.controller.mappings["m2_button_id"] = number
                             idx = self.combo_m2.findData(number)
                             if idx >= 0: self.combo_m2.setCurrentIndex(idx)
+                        
                         self.learning_target = None
+                        self.add_log("Botão capturado com sucesso!", True)
 
-                    m1_target = self.controller.mappings.get("m1_button_id", 2)
-                    m2_target = self.controller.mappings.get("m2_button_id", 1)
-                    
-                    if number == m1_target:
-                        if value == 1:
-                            self.lbl_m1_state.setText(f"M1 (Esq - ID {number}): PRESSIONADO")
-                            self.lbl_m1_state.setStyleSheet("background-color: #00aa55; color: white; padding: 12px; border-radius: 4px; font-weight: bold;")
-                        else:
-                            self.lbl_m1_state.setText(f"M1 (Esq - ID {number}): SOLTO")
-                            self.lbl_m1_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 12px; border-radius: 4px; font-weight: bold;")
-                            
-                    if number == m2_target:
-                        if value == 1:
-                            self.lbl_m2_state.setText(f"M2 (Dir - ID {number}): PRESSIONADO")
-                            self.lbl_m2_state.setStyleSheet("background-color: #0055ff; color: white; padding: 12px; border-radius: 4px; font-weight: bold;")
-                        else:
-                            self.lbl_m2_state.setText(f"M2 (Dir - ID {number}): SOLTO")
-                            self.lbl_m2_state.setStyleSheet("background-color: #2d2d2d; color: #888; padding: 12px; border-radius: 4px; font-weight: bold;")
-        except Exception:
-            pass
+        except OSError:
+            if self.fd: 
+                try: self.fd.close()
+                except: pass
+            self.fd = None
+            self.conn_status.setText("🔴 Desconectado")
+            self.conn_status.setStyleSheet("font-weight: bold; color: #ef4444;")
+            self.add_log("Aguardando conexão do comando...")
             
         if gui_needs_update:
-            self.bar_lx.setValue(self.last_pct.get(0, 50))
-            self.bar_ly.setValue(self.last_pct.get(1, 50))
-            self.bar_rx.setValue(self.last_pct.get(3, 50))
-            self.bar_ry.setValue(self.last_pct.get(4, 50))
-            self.bar_l2.setValue(self.last_pct.get(2, 0))
-            self.bar_r2.setValue(self.last_pct.get(5, 0))
+            self.bar_lx.setValue(self.last_pct.get(0, 50)); self.bar_ly.setValue(self.last_pct.get(1, 50))
+            self.bar_rx.setValue(self.last_pct.get(3, 50)); self.bar_ry.setValue(self.last_pct.get(4, 50))
+            self.bar_l2.setValue(self.last_pct.get(2, 0)); self.bar_r2.setValue(self.last_pct.get(5, 0))
 
 def main():
     app = QApplication(sys.argv)
-    controller = GameSirCyclone2()
-    window = MainWindow(controller)
+    window = MainWindow(GameSirCyclone2())
     window.show()
     sys.exit(app.exec())
 

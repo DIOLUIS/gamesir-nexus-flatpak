@@ -1,0 +1,9 @@
+[Desktop Entry]
+Name=GameSir Connect
+Comment=Gestor avançado de perfis para comandos GameSir no Linux
+Exec=gamesir-nexus
+Icon=com.github.dioluis.gamesir-nexus
+Terminal=false
+Type=Application
+Categories=Utility;HardwareSettings;
+Keywords=gamesir;joystick;controller;gamepad;
