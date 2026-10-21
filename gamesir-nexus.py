@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os, json, struct, sys, glob, traceback, zlib
 
-# Adiciona dinamicamente o caminho das bibliotecas instaladas pelo Flatpak
 for p in glob.glob('/app/lib/python3.*/site-packages'):
     sys.path.append(p)
 
@@ -93,7 +92,6 @@ class GameSirCyclone2:
         if raw_value > 0: return int(((raw_value - deadzone) / (32767 - deadzone)) * 32767)
         else: return int(((raw_value + deadzone) / (32767 - deadzone)) * -32767)
 
-# --- CLASSE DA BARRA DE TÍTULO NATIVA (COMPATÍVEL COM WAYLAND/X11) ---
 class TitleBar(QFrame):
     def __init__(self, parent_window):
         super().__init__(parent_window)
@@ -103,7 +101,6 @@ class TitleBar(QFrame):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            # Em vez de calcular posições, pedimos ao Sistema Operativo para mover a janela
             window_handle = self.parent_window.windowHandle()
             if window_handle:
                 window_handle.startSystemMove()
@@ -160,7 +157,6 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # O cabeçalho usa a classe nativa agora
         self.header = TitleBar(self)
         
         header_layout = QHBoxLayout(self.header)
@@ -480,7 +476,6 @@ class MainWindow(QMainWindow):
         self.poll_hardware()
 
     def poll_hardware(self):
-        # 1. Conexão Evdev / JS0
         if not self.fd:
             paths = ['/dev/input/js0', '/dev/input/js1', '/dev/input/js2']
             device_path = next((p for p in paths if os.path.exists(p)), None)
@@ -505,7 +500,6 @@ class MainWindow(QMainWindow):
                     self.conn_status.setStyleSheet("font-weight: bold; color: #ef4444;")
                 return
 
-        # 2. Conexão HIDRAW (M1/M2 nativos)
         if not self.hid_fd:
             nodes = self.get_gamesir_nodes()
             for node in nodes:
@@ -515,7 +509,6 @@ class MainWindow(QMainWindow):
                     break
                 except Exception: pass
 
-        # Processar HIDRAW (Nativo)
         if self.hid_fd:
             try:
                 hid_data = self.hid_fd.read(64)
@@ -544,21 +537,18 @@ class MainWindow(QMainWindow):
                 if self.hid_fd: self.hid_fd.close()
                 self.hid_fd = None
 
-        # Processar JS0 (Tradicional) com Proteção contra Event Flooding
         fn_format = 'IhBB'
         event_size = struct.calcsize(fn_format)
         gui_needs_update = False
         events_processed = 0
-        MAX_EVENTS_PER_TICK = 64 # Limite absoluto para evitar que o QTimer reentre e crash
+        MAX_EVENTS_PER_TICK = 64
         
         try:
             while events_processed < MAX_EVENTS_PER_TICK:
                 try:
                     event = self.fd.read(event_size)
-                except BlockingIOError:
+                except (BlockingIOError, TypeError):
                     break 
-                except TypeError:
-                    break
                 
                 if event == b'':
                     raise OSError("Cabo Desconectado")
@@ -570,7 +560,7 @@ class MainWindow(QMainWindow):
                 try:
                     time_val, value, ev_type, number = struct.unpack(fn_format, event)
                 except struct.error:
-                    continue # Ignora pacotes corrompidos durante o stress
+                    continue
                 
                 if ev_type & 0x80: continue
                 
