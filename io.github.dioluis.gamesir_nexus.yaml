@@ -1,13 +1,16 @@
 app-id: io.github.dioluis.gamesir_nexus
-runtime: org.kde.Platform
-runtime-version: '6.6'
-sdk: org.kde.Sdk
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+base: org.freedesktop.Platform
+base-version: '23.08'
 command: gamesir-nexus
 finish-args:
-  - --socket=x11
-  - --socket=wayland
   - --device=all
   - --share=ipc
+  - --socket=x11
+  - --socket=wayland
+  - --share=network
 
 modules:
   - name: gamesir-nexus
@@ -15,8 +18,11 @@ modules:
     build-commands:
       - install -D -m 755 gamesir-nexus.py /app/bin/gamesir-nexus
       - install -D -m 644 diottec.jpeg /app/bin/diottec.jpeg
-      - install -D -m 644 io.github.dioluis.gamesir_nexus.desktop /app/share/applications/io.github.dioluis.gamesir_nexus.desktop
-      - install -D -m 644 io.github.dioluis.gamesir_nexus.metainfo.xml /app/share/metainfo/io.github.dioluis.gamesir_nexus.metainfo.xml
+      - install -D -m 644 profile_default.json /app/bin/profile_default.json
     sources:
-      - type: dir
-        path: .
+      - type: file
+        path: gamesir-nexus.py
+      - type: file
+        path: diottec.jpeg
+      - type: file
+        path: profile_default.json
