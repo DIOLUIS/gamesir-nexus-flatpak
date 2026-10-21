@@ -45,7 +45,7 @@ class GameSirCyclone2:
     def load_profile(self):
         paths = [
             self.profile_path, f"/app/bin/{self.profile_path}",
-            os.path.expanduser("~/.var/app/com.github.dioluis.gamesir-nexus/config/profile_default.json")
+            os.path.expanduser("~/.var/app/io.github.dioluis.gamesir_nexus/config/profile_default.json")
         ]
         for p in paths:
             if os.path.exists(p):
@@ -73,7 +73,7 @@ class GameSirCyclone2:
                 except Exception: pass
 
     def save_profile(self):
-        config_dir = os.path.expanduser("~/.var/app/com.github.dioluis.gamesir-nexus/config")
+        config_dir = os.path.expanduser("~/.var/app/io.github.dioluis.gamesir_nexus/config")
         os.makedirs(config_dir, exist_ok=True)
         target_path = os.path.join(config_dir, "profile_default.json")
         data = {
@@ -93,6 +93,21 @@ class GameSirCyclone2:
         if raw_value > 0: return int(((raw_value - deadzone) / (32767 - deadzone)) * 32767)
         else: return int(((raw_value + deadzone) / (32767 - deadzone)) * -32767)
 
+# --- CLASSE DA BARRA DE TÍTULO NATIVA (COMPATÍVEL COM WAYLAND/X11) ---
+class TitleBar(QFrame):
+    def __init__(self, parent_window):
+        super().__init__(parent_window)
+        self.parent_window = parent_window
+        self.setStyleSheet("background-color: #16161b; border-bottom: 1px solid #2a2a32; padding: 10px 20px; border-top-left-radius: 12px; border-top-right-radius: 12px;")
+        self.setFixedHeight(60)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            # Em vez de calcular posições, pedimos ao Sistema Operativo para mover a janela
+            window_handle = self.parent_window.windowHandle()
+            if window_handle:
+                window_handle.startSystemMove()
+
 class MainWindow(QMainWindow):
     def __init__(self, controller):
         super().__init__()
@@ -102,7 +117,6 @@ class MainWindow(QMainWindow):
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setWindowTitle("GameSir Connect - Linux Edition")
         self.resize(1250, 800)
-        self.old_pos = None
         self.learning_target = None
         
         self.setStyleSheet("""
@@ -146,11 +160,8 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        self.header = QFrame()
-        self.header.setStyleSheet("background-color: #16161b; border-bottom: 1px solid #2a2a32; padding: 10px 20px; border-top-left-radius: 12px; border-top-right-radius: 12px;")
-        self.header.setFixedHeight(60)
-        self.header.mousePressEvent = self.header_mousePressEvent
-        self.header.mouseMoveEvent = self.header_mouseMoveEvent
+        # O cabeçalho usa a classe nativa agora
+        self.header = TitleBar(self)
         
         header_layout = QHBoxLayout(self.header)
         header_layout.setContentsMargins(0,0,0,0)
@@ -299,45 +310,41 @@ class MainWindow(QMainWindow):
         about_layout = QVBoxLayout(self.about_wrapper)
         about_layout.setAlignment(Qt.AlignCenter)
         
-        logo_path = "/app/bin/logo.jpeg" if os.path.exists("/app/bin/logo.jpeg") else "logo.jpeg"
-        if os.path.exists(logo_path):
-            logo_lbl = QLabel()
-            pixmap = QPixmap(logo_path).scaled(180, 180, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            logo_lbl.setPixmap(pixmap)
-            logo_lbl.setAlignment(Qt.AlignCenter)
-            about_layout.addWidget(logo_lbl)
-            
         dev_title = QLabel("GameSir Connect - Linux Edition")
         dev_title.setStyleSheet("font-size: 28px; font-weight: bold; color: #ffffff;")
         dev_title.setAlignment(Qt.AlignCenter)
         
         dev_info = QLabel("Desenvolvido por: Diotec Software (Dionísio Luís)\nVersão: 0.9.6 Beta\n\nSoftware de Engenharia Reversa para Comandos GameSir no Linux.")
         dev_info.setAlignment(Qt.AlignCenter)
-        dev_info.setStyleSheet("font-size: 16px; color: #a1a1aa; margin-top: 10px;")
+        dev_info.setStyleSheet("font-size: 16px; color: #a1a1aa; margin-top: 10px; margin-bottom: 20px;")
+        
+        diotec_path = "/app/bin/diottec.jpeg" if os.path.exists("/app/bin/diottec.jpeg") else "diottec.jpeg"
+        diotec_lbl = QLabel()
+        if os.path.exists(diotec_path):
+            pixmap = QPixmap(diotec_path).scaled(300, 300, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            diotec_lbl.setPixmap(pixmap)
+        diotec_lbl.setAlignment(Qt.AlignCenter)
         
         compat_info = QLabel("Compatibilidade Atual: GameSir Cyclone 2.\nO seu modelo funcionou? Encontrou algum bug?\nRelate em: diotec.soft@gmail.com")
         compat_info.setAlignment(Qt.AlignCenter)
-        compat_info.setStyleSheet("font-size: 14px; color: #34d399; margin-bottom: 20px;")
+        compat_info.setStyleSheet("font-size: 14px; color: #34d399; margin-bottom: 20px; margin-top: 20px;")
         
         donate_lbl = QLabel("Apoie o desenvolvimento contínuo deste projeto (PIX):")
         donate_lbl.setAlignment(Qt.AlignCenter)
         donate_lbl.setStyleSheet("font-weight: bold; color: #ffffff;")
         
-        qr_path = "/app/bin/chave.png" if os.path.exists("/app/bin/chave.png") else "chave.png"
-        if os.path.exists(qr_path):
-            qr_lbl = QLabel()
-            qr_pixmap = QPixmap(qr_path).scaled(150, 150, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            qr_lbl.setPixmap(qr_pixmap)
-            qr_lbl.setAlignment(Qt.AlignCenter)
-            about_layout.addWidget(qr_lbl)
-            
         btn_donate = QPushButton("📋 Copiar Chave PIX (a6e35576-02ec-4f43-a243-3e65ee8e9c3d)")
         btn_donate.setObjectName("btn_accent")
         btn_donate.setFixedWidth(450)
         btn_donate.clicked.connect(self.copy_pix)
         
-        about_layout.addWidget(dev_title); about_layout.addWidget(dev_info); about_layout.addWidget(compat_info)
-        about_layout.addWidget(donate_lbl); about_layout.addWidget(btn_donate, alignment=Qt.AlignCenter)
+        about_layout.addWidget(dev_title)
+        about_layout.addWidget(dev_info)
+        about_layout.addWidget(diotec_lbl)
+        about_layout.addWidget(compat_info)
+        about_layout.addWidget(donate_lbl)
+        about_layout.addWidget(btn_donate, alignment=Qt.AlignCenter)
+        
         self.stack.addWidget(self.about_wrapper)
 
         self.sidebar.currentRowChanged.connect(self.stack.setCurrentIndex)
@@ -349,15 +356,6 @@ class MainWindow(QMainWindow):
         self.fd = None; self.hid_fd = None; self.evdev_device = None; self.active_effect_id = None
         self.init_hardware()
         self.timer = QTimer(self); self.timer.timeout.connect(self.poll_hardware); self.timer.start(16)
-
-    def header_mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton: self.old_pos = event.globalPosition().toPoint()
-
-    def header_mouseMoveEvent(self, event):
-        if self.old_pos:
-            delta = QPoint(event.globalPosition().toPoint() - self.old_pos)
-            self.move(self.x() + delta.x(), self.y() + delta.y())
-            self.old_pos = event.globalPosition().toPoint()
 
     def toggle_maximize(self):
         if self.isMaximized(): self.showNormal()
@@ -559,6 +557,8 @@ class MainWindow(QMainWindow):
                     event = self.fd.read(event_size)
                 except BlockingIOError:
                     break 
+                except TypeError:
+                    break
                 
                 if event == b'':
                     raise OSError("Cabo Desconectado")
@@ -587,9 +587,7 @@ class MainWindow(QMainWindow):
                             self.last_pct[number] = pct; gui_needs_update = True
                             
                 elif ev_type == 1:
-                    # Previne que o clique interno do gatilho (geralmente gerado no fundo do curso) inunde o log
                     is_trigger_click = (number > 300)
-                    
                     if not is_trigger_click or self.learning_target:
                         bname = BUTTON_NAMES.get(number, f"B{number}")
                         st = "Pressionado" if value == 1 else "Solto"
