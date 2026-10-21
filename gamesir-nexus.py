@@ -301,7 +301,7 @@ class MainWindow(QMainWindow):
         
         self.stack.addWidget(self.dashboard_wrapper)
         
-        # --- SOBRE TELA ---
+        # --- SOBRE TELA (VERSÃO 0.9.6 CORRETA COM DIOTTEC.JPEG) ---
         self.about_wrapper = QWidget()
         about_layout = QVBoxLayout(self.about_wrapper)
         about_layout.setAlignment(Qt.AlignCenter)

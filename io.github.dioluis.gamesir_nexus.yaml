@@ -1,42 +1,22 @@
 app-id: io.github.dioluis.gamesir_nexus
 runtime: org.kde.Platform
-runtime-version: '6.11'
+runtime-version: '6.6'
 sdk: org.kde.Sdk
 command: gamesir-nexus
 finish-args:
-  - --share=ipc
-  - --socket=fallback-x11
+  - --socket=x11
   - --socket=wayland
-  - --device=dri
   - --device=all
-  - --env=QT_QPA_PLATFORM=wayland;xcb
-modules:
-  - name: python-deps
-    buildsystem: simple
-    build-options:
-      build-args:
-        - --share=network
-    build-commands:
-      - pip install --prefix=/app PySide6 evdev
+  - --share=ipc
 
+modules:
   - name: gamesir-nexus
     buildsystem: simple
     build-commands:
-      - install -D gamesir-nexus.py /app/bin/gamesir-nexus
-      - chmod +x /app/bin/gamesir-nexus
-      - install -D diottec.jpeg /app/bin/diottec.jpeg
-      - install -D logo_resized.jpeg /app/share/icons/hicolor/128x128/apps/io.github.dioluis.gamesir_nexus.png
-      - install -D io.github.dioluis.gamesir_nexus.desktop /app/share/applications/io.github.dioluis.gamesir_nexus.desktop
-      - install -D io.github.dioluis.gamesir_nexus.metainfo.xml /app/share/metainfo/io.github.dioluis.gamesir_nexus.metainfo.xml
+      - install -D -m 755 gamesir-nexus.py /app/bin/gamesir-nexus
+      - install -D -m 644 diottec.jpeg /app/bin/diottec.jpeg
+      - install -D -m 644 io.github.dioluis.gamesir_nexus.desktop /app/share/applications/io.github.dioluis.gamesir_nexus.desktop
+      - install -D -m 644 io.github.dioluis.gamesir_nexus.metainfo.xml /app/share/metainfo/io.github.dioluis.gamesir_nexus.metainfo.xml
     sources:
-      - type: file
-        path: gamesir-nexus.py
-      - type: file
-        path: diottec.jpeg
-      - type: file
-        path: logo_resized.jpeg
-      - type: file
-      - type: file
-        path: io.github.dioluis.gamesir_nexus.desktop
-      - type: file
-        path: io.github.dioluis.gamesir_nexus.metainfo.xml
+      - type: dir
+        path: .
