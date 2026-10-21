@@ -28,6 +28,7 @@ modules:
       - install -D logo.jpeg /app/bin/logo.jpeg
       - install -D chave.png /app/bin/chave.png
       - install -D com.github.dioluis.gamesir-nexus.desktop /app/share/applications/com.github.dioluis.gamesir-nexus.desktop
+      - install -D com.github.dioluis.gamesir-nexus.metainfo.xml /app/share/metainfo/com.github.dioluis.gamesir-nexus.metainfo.xml
     sources:
       - type: file
         path: gamesir-nexus.py
@@ -37,3 +38,5 @@ modules:
         path: chave.png
       - type: file
         path: com.github.dioluis.gamesir-nexus.desktop
+      - type: file
+        path: com.github.dioluis.gamesir-nexus.metainfo.xml
