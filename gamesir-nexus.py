@@ -311,7 +311,7 @@ class MainWindow(QMainWindow):
         dev_title.setStyleSheet("font-size: 28px; font-weight: bold; color: #ffffff;")
         dev_title.setAlignment(Qt.AlignCenter)
         
-        dev_info = QLabel("Desenvolvido por: Diotec Software (Dionísio Luís)\nVersão: 0.9.5 Beta\n\nSoftware de Engenharia Reversa para Comandos GameSir no Linux.")
+        dev_info = QLabel("Desenvolvido por: Diotec Software (Dionísio Luís)\nVersão: 0.9.6 Beta\n\nSoftware de Engenharia Reversa para Comandos GameSir no Linux.")
         dev_info.setAlignment(Qt.AlignCenter)
         dev_info.setStyleSheet("font-size: 16px; color: #a1a1aa; margin-top: 10px;")
         
@@ -546,13 +546,15 @@ class MainWindow(QMainWindow):
                 if self.hid_fd: self.hid_fd.close()
                 self.hid_fd = None
 
-        # Processar JS0 (Tradicional)
+        # Processar JS0 (Tradicional) com Proteção contra Event Flooding
         fn_format = 'IhBB'
         event_size = struct.calcsize(fn_format)
         gui_needs_update = False
+        events_processed = 0
+        MAX_EVENTS_PER_TICK = 64 # Limite absoluto para evitar que o QTimer reentre e crash
         
         try:
-            while True:
+            while events_processed < MAX_EVENTS_PER_TICK:
                 try:
                     event = self.fd.read(event_size)
                 except BlockingIOError:
@@ -563,7 +565,13 @@ class MainWindow(QMainWindow):
                 if event is None or len(event) < event_size:
                     break
                 
-                time_val, value, ev_type, number = struct.unpack(fn_format, event)
+                events_processed += 1
+                
+                try:
+                    time_val, value, ev_type, number = struct.unpack(fn_format, event)
+                except struct.error:
+                    continue # Ignora pacotes corrompidos durante o stress
+                
                 if ev_type & 0x80: continue
                 
                 if ev_type == 2:
@@ -579,9 +587,13 @@ class MainWindow(QMainWindow):
                             self.last_pct[number] = pct; gui_needs_update = True
                             
                 elif ev_type == 1:
-                    bname = BUTTON_NAMES.get(number, f"B{number}")
-                    st = "Pressionado" if value == 1 else "Solto"
-                    self.add_log(f"Input: {bname} -> {st}")
+                    # Previne que o clique interno do gatilho (geralmente gerado no fundo do curso) inunde o log
+                    is_trigger_click = (number > 300)
+                    
+                    if not is_trigger_click or self.learning_target:
+                        bname = BUTTON_NAMES.get(number, f"B{number}")
+                        st = "Pressionado" if value == 1 else "Solto"
+                        self.add_log(f"Input: {bname} -> {st}")
 
                     if self.learning_target and value == 1:
                         if number not in BUTTON_NAMES:

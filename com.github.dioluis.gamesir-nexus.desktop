@@ -2,7 +2,7 @@
 Name=GameSir Connect
 Comment=Gestor avançado de perfis para comandos GameSir no Linux
 Exec=gamesir-nexus
-Icon=com.github.dioluis.gamesir-nexus
+Icon=io.github.dioluis.gamesir_nexus
 Terminal=false
 Type=Application
 Categories=Utility;HardwareSettings;
