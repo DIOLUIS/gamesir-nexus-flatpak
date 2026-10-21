@@ -10,7 +10,7 @@ finish-args:
   - --socket=x11
   - --device=dri
   - --device=all
-  - --env=QT_QPA_PLATFORM=xcb
+  - --env=QT_QPA_PLATFORM=wayland;xcb
 modules:
   - name: python-deps
     buildsystem: simple

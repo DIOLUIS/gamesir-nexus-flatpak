@@ -17,7 +17,7 @@ Aplicação de Engenharia Reversa desenvolvida em Python 3 + PySide6 (Qt6) para 
 - **Dependências Python (`python-deps`):** Instalação isolada em `/app` via `pip install --prefix=/app PySide6 evdev` com permissão de rede restrita apenas à fase de compilação (`--share=network`).
 - **Permissões de Execução (`finish-args`):**
   - `--socket=x11`, `--socket=wayland`, `--socket=fallback-x11`
-  - `--env=QT_QPA_PLATFORM=xcb` (Garante compatibilidade total com janelas Frameless e posicionamento manual da janela)
+  - `--env=QT_QPA_PLATFORM=wayland;xcb` (Garante compatibilidade total com janelas Frameless e posicionamento manual da janela)
   - `--device=dri` e `--device=all` (Acesso direto a aceleração gráfica e portas `/dev/input/*` e `/dev/hidraw*`)
 
 ## 4. Contacto e Apoio
