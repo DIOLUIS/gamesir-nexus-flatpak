@@ -20,7 +20,10 @@ except ImportError:
     EVDEV_AVAILABLE = False
 
 class HardwareMonitor(QThread):
+    log_signal = Signal(str, bool)
+    status_signal = Signal(str, str)
     telemetry_signal = Signal(dict)
+    m_btn_signal = Signal(str, bool)
     
     def __init__(self, controller, parent=None):
         super().__init__(parent)
@@ -30,7 +33,6 @@ class HardwareMonitor(QThread):
         self.hid_fd = None
 
     def run(self):
-        # A lógica de leitura do hardware será movida para aqui no próximo passo
         while self.running:
             self.msleep(16)
 
@@ -375,6 +377,10 @@ class MainWindow(QMainWindow):
         self.fd = None; self.hid_fd = None; self.evdev_device = None; self.active_effect_id = None
         self.init_hardware()
         self.hw_thread = HardwareMonitor(self.controller, self)
+        self.hw_thread.log_signal.connect(self.add_log)
+        self.hw_thread.status_signal.connect(self.update_status)
+        self.hw_thread.telemetry_signal.connect(self.update_telemetry)
+        self.hw_thread.m_btn_signal.connect(self.update_m_btn)
         self.hw_thread.start()
 
     def toggle_maximize(self):
@@ -646,6 +652,23 @@ class MainWindow(QMainWindow):
             self.bar_lx.setValue(self.last_pct.get(0, 50)); self.bar_ly.setValue(self.last_pct.get(1, 50))
             self.bar_rx.setValue(self.last_pct.get(3, 50)); self.bar_ry.setValue(self.last_pct.get(4, 50))
             self.bar_l2.setValue(self.last_pct.get(2, 0)); self.bar_r2.setValue(self.last_pct.get(5, 0))
+
+
+    def update_status(self, text, color):
+        self.conn_status.setText(text)
+        self.conn_status.setStyleSheet(f"font-weight: bold; color: {color};")
+
+    def update_telemetry(self, data):
+        self.bar_lx.setValue(data.get(0, 50)); self.bar_ly.setValue(data.get(1, 50))
+        self.bar_rx.setValue(data.get(3, 50)); self.bar_ry.setValue(data.get(4, 50))
+        self.bar_l2.setValue(data.get(2, 0)); self.bar_r2.setValue(data.get(5, 0))
+
+    def update_m_btn(self, btn, state):
+        led = self.led_m1 if btn == 'm1' else self.led_m2
+        if state:
+            led.setText("🟢")
+        elif not state and led.text() == "🟢":
+            led.setText("⚫")
 
 def main():
     app = QApplication(sys.argv)
