@@ -374,7 +374,8 @@ class MainWindow(QMainWindow):
         self.last_pct = {0: 50, 1: 50, 2: 0, 3: 50, 4: 50, 5: 0}
         self.fd = None; self.hid_fd = None; self.evdev_device = None; self.active_effect_id = None
         self.init_hardware()
-        self.timer = QTimer(self); self.timer.timeout.connect(self.poll_hardware); self.timer.start(16)
+        self.hw_thread = HardwareMonitor(self.controller, self)
+        self.hw_thread.start()
 
     def toggle_maximize(self):
         if self.isMaximized(): self.showNormal()
