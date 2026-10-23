@@ -573,6 +573,8 @@ class MainWindow(QMainWindow):
         try:
             while events_processed < MAX_EVENTS_PER_TICK:
                 try:
+                    if not self.fd:
+                        break
                     event = self.fd.read(event_size)
                 except BlockingIOError:
                     break 
