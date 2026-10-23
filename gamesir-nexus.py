@@ -22,7 +22,7 @@ except ImportError:
 class HardwareMonitor(QThread):
     log_signal = Signal(str, bool)
     status_signal = Signal(str, str)
-    telemetry_signal = Signal(dict)
+    telemetry_signal = Signal(object)
     m_btn_signal = Signal(str, bool)
     
     def __init__(self, controller, parent=None):
@@ -31,9 +31,87 @@ class HardwareMonitor(QThread):
         self.running = True
         self.fd = None
         self.hid_fd = None
+        self.last_pct = {0: 50, 1: 50, 2: 0, 3: 50, 4: 50, 5: 0}
+
+    def get_gamesir_nodes(self):
+        import glob, os
+        nodes = []
+        for node in sorted(glob.glob('/dev/hidraw*')):
+            uevent_path = f"/sys/class/hidraw/{os.path.basename(node)}/device/uevent"
+            if os.path.exists(uevent_path):
+                try:
+                    with open(uevent_path, 'r') as f:
+                        txt = f.read().lower()
+                        if 'gamesir' in txt or '054c' in txt or 'chicken' in txt: nodes.append(node)
+                except: pass
+        return nodes
 
     def run(self):
+        import os, struct
+        fn_format = 'IhBB'
+        event_size = struct.calcsize(fn_format)
+        
         while self.running:
+            gui_needs_update = False
+            
+            if not self.fd:
+                paths = ['/dev/input/js0', '/dev/input/js1', '/dev/input/js2']
+                device_path = next((p for p in paths if os.path.exists(p)), None)
+                if device_path:
+                    try:
+                        self.fd = open(device_path, 'rb')
+                        os.set_blocking(self.fd.fileno(), False)
+                        self.status_signal.emit("🟢 Cyclone 2 (Ativo)", "#34d399")
+                        self.log_signal.emit("Comando reconhecido e sincronizado.", True)
+                    except Exception: pass
+                else:
+                    self.status_signal.emit("🔴 Desconectado", "#ef4444")
+            
+            if not self.hid_fd:
+                nodes = self.get_gamesir_nodes()
+                for node in nodes:
+                    try:
+                        self.hid_fd = open(node, 'rb')
+                        os.set_blocking(self.hid_fd.fileno(), False)
+                        break
+                    except Exception: pass
+
+            if self.hid_fd:
+                try:
+                    hid_data = self.hid_fd.read(64)
+                    if hid_data and len(hid_data) > 6:
+                        m1_pressed = bool(hid_data[5] & 0x10) or bool(hid_data[6] & 0x01)
+                        m2_pressed = bool(hid_data[5] & 0x20) or bool(hid_data[6] & 0x02)
+                        self.m_btn_signal.emit('m1', m1_pressed)
+                        self.m_btn_signal.emit('m2', m2_pressed)
+                except: pass
+
+            if self.fd:
+                events_processed = 0
+                while events_processed < 64:
+                    try:
+                        event = self.fd.read(event_size)
+                        if not event or len(event) < event_size: break
+                        events_processed += 1
+                        time_val, value, ev_type, number = struct.unpack(fn_format, event)
+                        
+                        if ev_type & 0x80: continue
+                        if ev_type == 2:
+                            if number in [0, 1, 3, 4]:
+                                dz = self.controller.DEADZONE_L_X if number in [0, 1] else self.controller.DEADZONE_R_X
+                                f = self.controller.apply_deadzone(value, dz)
+                                pct = int(((f + 32767) / 65534) * 100)
+                                if self.last_pct.get(number) != pct:
+                                    self.last_pct[number] = pct; gui_needs_update = True
+                            elif number in [2, 5]:
+                                pct = int(((value + 32767) / 65534) * 100)
+                                if self.last_pct.get(number) != pct:
+                                    self.last_pct[number] = pct; gui_needs_update = True
+                    except: break
+            
+            if gui_needs_update:
+                self.telemetry_signal.emit(self.last_pct)
+                
             self.msleep(16)
 
     def stop(self):
@@ -503,9 +581,11 @@ class MainWindow(QMainWindow):
         self.add_log("Teste de vibração acionado.", True)
 
     def init_hardware(self):
+        return
         self.poll_hardware()
 
     def poll_hardware(self):
+        return
         # 1. Conexão Evdev / JS0
         if not self.fd:
             paths = ['/dev/input/js0', '/dev/input/js1', '/dev/input/js2']
