@@ -475,7 +475,8 @@ class MainWindow(QMainWindow):
     def update_led_settings(self):
         self.controller.led_brightness = self.slider_brilho.value()
         self.controller.led_speed = self.slider_vel.value()
-        self.add_log(f"LEDs atualizados internamente -> Brilho: {self.controller.led_brightness}% | Vel: {self.controller.led_speed}%", True)
+        self.send_controller_led(self.controller.led_r, self.controller.led_g, self.controller.led_b)
+        self.add_log(f"Brilho ajustado para {self.controller.led_brightness}%", True)
 
     def open_color_picker(self):
         c = QColorDialog.getColor(QColor(self.controller.led_r, self.controller.led_g, self.controller.led_b), self, "Cor dos LEDs")
@@ -560,11 +561,18 @@ class MainWindow(QMainWindow):
 
     def send_controller_led(self, r, g, b, weak=0, strong=0, update_rumble=False):
         self.controller.led_r = r; self.controller.led_g = g; self.controller.led_b = b
+        
+        # Aplica o brilho matematicamente (Software Dimming)
+        pct = self.slider_brilho.value() / 100.0
+        r_dim = int(r * pct)
+        g_dim = int(g * pct)
+        b_dim = int(b * pct)
+
         targets = self.get_gamesir_nodes()
         if not targets: return
         report = bytearray(64)
         report[0] = 0x05; report[1] = 0x03 if update_rumble else 0x02; report[2] = 0x04
-        report[4] = weak; report[5] = strong; report[6] = r; report[7] = g; report[8] = b
+        report[4] = weak; report[5] = strong; report[6] = r_dim; report[7] = g_dim; report[8] = b_dim
         for target in targets:
             try:
                 with open(target, 'wb') as f: f.write(report); f.flush()
