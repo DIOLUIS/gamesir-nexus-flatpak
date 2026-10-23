@@ -750,7 +750,16 @@ class MainWindow(QMainWindow):
         elif not state and led.text() == "🟢":
             led.setText("⚫")
 
+
+    def closeEvent(self, event):
+        if hasattr(self, 'hw_thread') and self.hw_thread.isRunning():
+            self.hw_thread.stop()
+        event.accept()
+
 def main():
+    import signal
+    # Permite que o Ctrl+C encerre a aplicação sem gerar o Traceback do KeyboardInterrupt
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
     app = QApplication(sys.argv)
     window = MainWindow(GameSirCyclone2())
     window.show()
