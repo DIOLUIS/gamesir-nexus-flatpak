@@ -321,12 +321,14 @@ class MainWindow(QMainWindow):
             if c > 1: c = 0; r += 1
         lay_luzes.addLayout(led_grid)
         lay_luzes.addSpacing(10)
-        lay_luzes.addWidget(QLabel("Brilho (Efeito futuro)"))
+        lay_luzes.addWidget(QLabel("Brilho"))
         self.slider_brilho = QSlider(Qt.Horizontal); self.slider_brilho.setRange(0, 100); self.slider_brilho.setValue(self.controller.led_brightness)
         lay_luzes.addWidget(self.slider_brilho)
-        lay_luzes.addWidget(QLabel("Velocidade (Efeito futuro)"))
+        self.slider_brilho.valueChanged.connect(self.update_led_settings)
+        lay_luzes.addWidget(QLabel("Velocidade"))
         self.slider_vel = QSlider(Qt.Horizontal); self.slider_vel.setRange(0, 100); self.slider_vel.setValue(self.controller.led_speed)
         lay_luzes.addWidget(self.slider_vel)
+        self.slider_vel.valueChanged.connect(self.update_led_settings)
         btn_cor = QPushButton("Aplicar Cor Sólida no Comando"); btn_cor.clicked.connect(self.open_color_picker)
         lay_luzes.addWidget(btn_cor)
         col1_layout.addWidget(card_luzes)
@@ -469,6 +471,11 @@ class MainWindow(QMainWindow):
         for btn in self.led_btns: btn.setChecked(btn.text() == mode)
         self.controller.led_mode = mode
         self.add_log(f"Modo de LED selecionado: {mode} (Sólido requer escolha de cor)", True)
+
+    def update_led_settings(self):
+        self.controller.led_brightness = self.slider_brilho.value()
+        self.controller.led_speed = self.slider_vel.value()
+        self.add_log(f"LEDs atualizados internamente -> Brilho: {self.controller.led_brightness}% | Vel: {self.controller.led_speed}%", True)
 
     def open_color_picker(self):
         c = QColorDialog.getColor(QColor(self.controller.led_r, self.controller.led_g, self.controller.led_b), self, "Cor dos LEDs")
