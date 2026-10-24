@@ -11,7 +11,6 @@ finish-args:
   - --device=dri
   - --device=all
   - --env=QT_QPA_PLATFORM=wayland;xcb
-  - --env=PYTHONPATH=/app/packages
 modules:
   - name: python-deps
     buildsystem: simple
@@ -19,7 +18,7 @@ modules:
       build-args:
         - --share=network
     build-commands:
-      - pip3 install --target=/app/packages --no-cache-dir PySide6 evdev
+      - pip3 install --prefix=/app --no-cache-dir --break-system-packages PySide6 evdev
 
   - name: gamesir-nexus
     buildsystem: simple
