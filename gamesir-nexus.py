@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-import os, json, struct, sys, glob, traceback, zlib
+import os, json, struct, sys, glob, traceback, zlib, platform
 
 for p in glob.glob('/app/lib/python3.*/site-packages'):
     sys.path.append(p)
@@ -101,7 +101,6 @@ class HardwareMonitor(QThread):
                         if ev_type & 0x80: continue
                         
                         if ev_type == 1:
-                            # --- INTERCEÇÃO: LAYOUT SWITCH ---
                             if self.controller.mappings.get("swap_ab_xy", False):
                                 if number == 0: number = 1
                                 elif number == 1: number = 0
@@ -119,12 +118,9 @@ class HardwareMonitor(QThread):
                                     self.last_pct[number] = pct; gui_needs_update = True
                             elif number in [2, 5]:
                                 pct = int(((value + 32767) / 65534) * 100)
-                                
-                                # --- INTERCEÇÃO: GATILHO ULTRASENSÍVEL ---
                                 if self.controller.mappings.get("hair_triggers", False):
-                                    if pct > 5:  # 5% de zona morta para evitar toques acidentais
+                                    if pct > 5:
                                         pct = 100
-                                        
                                 if self.last_pct.get(number) != pct:
                                     self.last_pct[number] = pct; gui_needs_update = True
                     except OSError:
@@ -236,7 +232,6 @@ class MainWindow(QMainWindow):
     def __init__(self, controller):
         super().__init__()
         self.controller = controller
-        
         self.setWindowFlags(Qt.FramelessWindowHint)
         self.setAttribute(Qt.WA_TranslucentBackground)
         self.setWindowTitle("GameSir Connect - Linux Edition")
@@ -428,14 +423,10 @@ class MainWindow(QMainWindow):
         lay_map.addWidget(self.combo_m2)
         lbl_m2.hide(); self.led_m2.hide(); btn_learn_m2.hide(); self.combo_m2.hide()
         
-        # --- CHECKBOXES VIVAS ---
         self.chk_hair = QCheckBox("Modo Gatilho Ultrasensível"); self.chk_hair.setChecked(self.controller.mappings.get("hair_triggers", False))
         self.chk_swap = QCheckBox("Alternar para layout Switch"); self.chk_swap.setChecked(self.controller.mappings.get("swap_ab_xy", False))
-        
-        # Conectando aos métodos que atualizam em tempo real
         self.chk_hair.stateChanged.connect(self.update_software_mappings)
         self.chk_swap.stateChanged.connect(self.update_software_mappings)
-        
         lay_map.addSpacing(10)
         lay_map.addWidget(self.chk_hair); lay_map.addWidget(self.chk_swap)
         col3_layout.addWidget(card_map)
@@ -467,11 +458,15 @@ class MainWindow(QMainWindow):
         if os.path.exists(diotec_path):
             pixmap = QPixmap(diotec_path).scaled(300, 300, Qt.KeepAspectRatio, Qt.SmoothTransformation); diotec_lbl.setPixmap(pixmap)
         diotec_lbl.setAlignment(Qt.AlignCenter)
-        compat_info = QLabel("Compatibilidade Atual: GameSir Cyclone 2.\nO seu modelo funcionou? Encontrou algum bug?\nRelate em: diotec.soft@gmail.com"); compat_info.setAlignment(Qt.AlignCenter); compat_info.setStyleSheet("font-size: 14px; color: #34d399; margin-bottom: 20px; margin-top: 20px;")
-        donate_lbl = QLabel("Apoie o desenvolvimento contínuo deste projeto (PIX):"); donate_lbl.setAlignment(Qt.AlignCenter); donate_lbl.setStyleSheet("font-weight: bold; color: #ffffff;")
+        compat_info = QLabel("Compatibilidade Atual: GameSir Cyclone 2.\nO seu modelo funcionou ou encontrou algum erro?\nAjude-nos a adicionar suporte para novos comandos!"); compat_info.setAlignment(Qt.AlignCenter); compat_info.setStyleSheet("font-size: 14px; color: #34d399; margin-bottom: 10px; margin-top: 20px;")
+        
+        # --- NOVO BOTÃO DE DIAGNÓSTICO ---
+        btn_diag = QPushButton("🐞 Copiar Relatório de Diagnóstico para Email"); btn_diag.setStyleSheet("background-color: #3f3f46; color: white; padding: 10px; border-radius: 6px; font-weight: bold;"); btn_diag.setFixedWidth(450); btn_diag.clicked.connect(self.copy_diagnostics)
+        
+        donate_lbl = QLabel("Apoie o desenvolvimento contínuo (PIX):"); donate_lbl.setAlignment(Qt.AlignCenter); donate_lbl.setStyleSheet("font-weight: bold; color: #ffffff; margin-top: 15px;")
         btn_donate = QPushButton("📋 Copiar Chave PIX (a6e35576-02ec-4f43-a243-3e65ee8e9c3d)"); btn_donate.setObjectName("btn_accent"); btn_donate.setFixedWidth(450); btn_donate.clicked.connect(self.copy_pix)
         
-        about_layout.addWidget(dev_title); about_layout.addWidget(dev_info); about_layout.addWidget(diotec_lbl); about_layout.addWidget(compat_info); about_layout.addWidget(donate_lbl); about_layout.addWidget(btn_donate, alignment=Qt.AlignCenter)
+        about_layout.addWidget(dev_title); about_layout.addWidget(dev_info); about_layout.addWidget(diotec_lbl); about_layout.addWidget(compat_info); about_layout.addWidget(btn_diag, alignment=Qt.AlignCenter); about_layout.addWidget(donate_lbl); about_layout.addWidget(btn_donate, alignment=Qt.AlignCenter)
         self.stack.addWidget(self.about_wrapper)
         self.sidebar.currentRowChanged.connect(self.stack.setCurrentIndex)
         content_layout.addWidget(self.stack)
@@ -489,12 +484,34 @@ class MainWindow(QMainWindow):
         self.hw_thread.btn_pressed_signal.connect(self.handle_button)
         self.hw_thread.start()
 
-    # --- NOVO MÉTODO PARA ATUALIZAR MAPAS EM TEMPO REAL ---
+    # --- NOVA FUNÇÃO: EXTRAIR DADOS DE HARDWARE ---
+    def copy_diagnostics(self):
+        diag = "--- Relatorio de Diagnostico GameSir Connect ---\n"
+        diag += f"Versao: 0.9.6 Beta\nSistema: {platform.system()} {platform.release()}\n\n"
+        diag += "== DISPOSITIVOS HIDRAW (USB/Dongle) ==\n"
+        for node in sorted(glob.glob('/sys/class/hidraw/*')):
+            try:
+                with open(os.path.join(node, 'device/uevent'), 'r') as f:
+                    conteudo = f.read().strip()
+                    if 'HID_NAME' in conteudo:
+                        diag += f"[{os.path.basename(node)}]\n{conteudo}\n\n"
+            except: pass
+            
+        diag += "== DISPOSITIVOS JOYSTICK (Telemetria) ==\n"
+        for node in sorted(glob.glob('/dev/input/js*')):
+            diag += f"Encontrado: {node}\n"
+            
+        diag += "\n------------------------------------------------\n"
+        diag += "Por favor, envie este relatorio para: diotec.soft@gmail.com\n"
+        diag += "Indique no email: O seu comando funcionou? Qual e o modelo exato?"
+        
+        QApplication.clipboard().setText(diag)
+        self.add_log("Relatório copiado! Cole no seu email e envie-nos o feedback.", True)
+
     def update_software_mappings(self):
         self.controller.mappings["hair_triggers"] = self.chk_hair.isChecked()
         self.controller.mappings["swap_ab_xy"] = self.chk_swap.isChecked()
-        self.controller.save_profile() # Salva imediatamente no JSON
-        
+        self.controller.save_profile() 
         status_msg = "Mapeamento atualizado: "
         status_msg += "Gatilho Ultra ON | " if self.chk_hair.isChecked() else "Gatilho Normal | "
         status_msg += "Layout Switch" if self.chk_swap.isChecked() else "Layout Xbox"
