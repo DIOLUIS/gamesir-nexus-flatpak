@@ -1,52 +1,53 @@
-# 🎮 GameSir Connect - Linux Edition (v0.9.5 Beta)
+# 🎮 GameSir Connect - Linux Edition
 
-Software open-source para configuração, telemetria e gestão de comandos **GameSir** (focado no **GameSir Cyclone 2**) em sistemas Linux.
+**Desenvolvido por:** Diotec Software (Dionísio Luís)  
+**Versão:** 0.9.6 Beta  
+**Compatibilidade Atual:** GameSir Cyclone 2  
 
-Desenvolvido por **Diotec Software (Dionísio Luís)**.
-
----
-
-## ✨ Funcionalidades Principais
-
-* **Telemetria em Tempo Real:** Monitorização dos analógicos (L3/R3) com ajuste de Zona Morta (*Deadzone*) e leitura analógica dos gatilhos (LT/RT).
-* **Controlo de Vibração:** Ajuste independente dos motores pesado (esquerdo) e leve (direito) com botão de teste em tempo real.
-* **Botões Traseiros (M1/M2):** Modo de captura rápida (*learning*) e indicador luminoso na interface.
-* **Iluminação RGB (LED Central):** Aplicação de cores sólidas diretamente no hardware via comunicação USB HID.
-* **Hot-Plug Automático:** Reconhecimento instantâneo ao ligar ou desligar o cabo USB sem fechar a aplicação.
-* **Perfis Persistentes:** Gravação automática em JSON dentro do diretório de configuração do utilizador.
+Uma ferramenta nativa de diagnóstico e configuração para comandos GameSir no Linux. Desenvolvido através de engenharia reversa do protocolo USB/Dongle proprietário da GameSir, este software permite controlar as luzes, testar motores de vibração e visualizar telemetria de hardware em tempo real, sem depender de aplicações Windows ou máquinas virtuais.
 
 ---
 
-## 🚀 Como Compilar e Instalar (Flatpak)
+## ✨ Funcionalidades
 
-### 1. Instalar o SDK do KDE 6.6
-No terminal, execute:
-    flatpak install flathub org.kde.Platform//6.6 org.kde.Sdk//6.6
+* **📡 Telemetria em Tempo Real:** Visualizador preciso da pressão dos gatilhos (LT/RT) e posição dos analógicos (L3/R3).
+* **🎯 Testador de Botões:** Feedback visual instantâneo dos botões faciais (ABXY) e *bumpers* (L1/R1).
+* **💡 Controlo de LEDs (RGB):** Ajuste de Modos (Fluxo, Arco-íris, Pulso, etc.), Brilho, Velocidade e aplicação de Cor Sólida personalizada.
+* **📳 Controlo Hápico:** Teste isolado e ajuste de intensidade dos motores de vibração (Pesado/Esquerdo e Leve/Direito).
+* **⚡ Mapeamento via Software:**
+  * **Modo Gatilho Ultrasensível:** Anula a zona morta do gatilho para resposta imediata (100% ao mínimo toque).
+  * **Layout Switch:** Inversão lógica dos botões A/B e X/Y via software.
+* **🔌 Suporte Hot-Plug:** A aplicação deteta automaticamente a ligação/desligação do comando sem crashar.
 
-### 2. Compilar e Instalar no Utilizador
-Na pasta do projeto (contendo `gamesir-nexus.py`, `com.github.dioluis.gamesir-nexus.yaml`, `com.github.dioluis.gamesir-nexus.desktop`, `logo.jpeg` e `chave.png`), execute:
-    flatpak-builder --user --install --force-clean build-dir com.github.dioluis.gamesir-nexus.yaml
-
-### 3. Executar a Aplicação
-Procure por **GameSir Connect** no menu de aplicações do seu sistema ou execute no terminal:
-    flatpak run com.github.dioluis.gamesir-nexus
-
----
-
-## 📦 Gerar Instalador Único (.flatpak)
-
-Para criar um ficheiro único distribuível:
-    flatpak build-export repo build-dir
-    flatpak build-bundle repo gamesir-nexus-v0.9.5-beta.flatpak com.github.dioluis.gamesir-nexus
+*(Nota: O mapeamento de hardware para as pás traseiras M1/M2 e gravação na EEPROM está atualmente trancado pelo protocolo proprietário via ioctl e aguarda desenvolvimento futuro. Por favor, use os atalhos físicos do comando para mapear o M1 e M2).*
 
 ---
 
-## 🤝 Compatibilidade e Feedback
+## 🛠️ Instalação e Permissões (Muito Importante)
 
-Atualmente validado no **GameSir Cyclone 2**. Testou noutro modelo da GameSir ou encontrou algum bug?
-Envie o seu relato para: **diotec.soft@gmail.com**
+No Linux, aplicações comuns (e Flatpaks) não têm permissão para ler hardware bruto por motivos de segurança. Para o **GameSir Connect** conseguir comunicar com o comando sem precisares da palavra-passe de Administrador (sudo), **tens de adicionar uma regra udev ao teu sistema operativo.**
 
-## ☕ Apoie o Projeto
+Abra o teu terminal e executa este comando (apenas uma vez):
 
-Este projeto é open-source. Se lhe foi útil, apoie o desenvolvimento contínuo via **PIX (Santander)**:
-* **Chave PIX:** `a6e35576-02ec-4f43-a243-3e65ee8e9c3d`
+    echo 'KERNEL=="hidraw*", SUBSYSTEM=="hidraw", MODE="0666"' | sudo tee /etc/udev/rules.d/99-gamesir-nexus.rules
+    sudo udevadm control --reload-rules
+    sudo udevadm trigger
+
+### Compilar e Instalar via Flatpak
+Garante que tens o flatpak-builder instalado no teu sistema. Na pasta do projeto, executa:
+
+    flatpak-builder --user --install --force-clean build-dir io.github.dioluis.gamesir_nexus.yaml
+
+Após a instalação, podes iniciar a aplicação através do menu das tuas aplicações ou via terminal com:
+
+    flatpak run io.github.dioluis.gamesir_nexus
+
+---
+
+## 🤝 Apoia o Projeto
+
+O desenvolvimento deste software envolveu inúmeras horas de engenharia reversa de pacotes USB (Wireshark) e testes de baixo nível em Linux. Se este software te foi útil, considera apoiar o desenvolvimento contínuo:
+
+**Chave PIX:** a6e35576-02ec-4f43-a243-3e65ee8e9c3d
+
+**Contacto para bugs ou feedback:** diotec.soft@gmail.com

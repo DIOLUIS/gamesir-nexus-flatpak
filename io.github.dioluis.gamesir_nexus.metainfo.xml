@@ -1,36 +1,44 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
   <id>io.github.dioluis.gamesir_nexus</id>
-  <metadata_license>CC0-1.0</metadata_license>
-  <project_license>MIT</project_license>
   <name>GameSir Connect</name>
-  <summary>Configuração, telemetria e gestão de comandos GameSir no Linux</summary>
+  <summary>Ferramenta nativa de configuração para comandos GameSir</summary>
+  <developer_name>Diotec Software</developer_name>
+  
+  <!-- Licenças padrão para projetos open-source e metadados -->
+  <metadata_license>FSFAP</metadata_license>
+  <project_license>GPL-3.0-or-later</project_license>
+  
   <description>
-    <p>
-      GameSir Connect - Linux Edition é uma ferramenta de engenharia reversa open-source 
-      desenvolvida pela Diotec Software para otimizar e controlar comandos GameSir (focado no modelo Cyclone 2) em sistemas Linux.
-    </p>
+    <p>O GameSir Connect é uma ferramenta nativa de diagnóstico e configuração para comandos GameSir no Linux. Desenvolvido através de engenharia reversa, permite controlar o hardware do seu comando sem depender de máquinas virtuais ou software de outros sistemas operativos.</p>
+    <p>Funcionalidades principais:</p>
     <ul>
-      <li>Telemetria em tempo real a 60Hz para analógicos (L3/R3) e gatilhos (LT/RT).</li>
-      <li>Ajuste de zonas mortas e calibração de precisão.</li>
-      <li>Controlo individual de vibração para os motores pesado e leve via evdev.</li>
-      <li>Mapeamento visual e captura dos botões traseiros M1 e M2.</li>
-      <li>Injeção de cores no LED central através de comunicação USB HID Raw.</li>
-      <li>Motor Hot-Plug resiliente para conexões e desconexões de cabo em tempo de execução.</li>
+      <li>Telemetria em tempo real (gatilhos e analógicos)</li>
+      <li>Testador de botões com feedback visual (ABXY e bumpers)</li>
+      <li>Controlo completo de LEDs RGB (modos, brilho, velocidade e cor)</li>
+      <li>Ajuste e teste independente de motores de vibração</li>
+      <li>Mapeamento avançado via software (Gatilho Ultrasensível e Layout Switch)</li>
     </ul>
   </description>
+  
   <launchable type="desktop-id">io.github.dioluis.gamesir_nexus.desktop</launchable>
-  <url type="homepage">https://github.com/dioluis/gamesir-nexus</url>
-  <url type="bugtracker">https://github.com/dioluis/gamesir-nexus/issues</url>
-  <developer id="io.github.dioluis">
-    <name>Diotec Software (Dionísio Luís)</name>
-  </developer>
-  <content_rating type="oars-1.1"/>
+  
+  <screenshots>
+    <screenshot type="default">
+      <!-- NOTA: Para publicar no Flathub, precisas de colocar aqui o link direto (RAW) de uma captura de ecrã hospedada no teu GitHub -->
+      <image>https://raw.githubusercontent.com/dioluis/gamesir-nexus/main/screenshot.png</image>
+    </screenshot>
+  </screenshots>
+  
+  <url type="homepage">https://github.com/dioluis</url>
+  
   <releases>
-    <release version="0.9.5-beta" date="2026-10-20">
+    <release version="0.9.6" date="2026-10-23">
       <description>
-        <p>Primeiro lançamento público beta com suporte a Wayland/X11 e motores de vibração e LED.</p>
+        <p>Lançamento Beta Inicial. Inclui suporte para GameSir Cyclone 2, visualizador ABXY em tempo real, suporte a Hot-Plug e remoção da necessidade de privilégios sudo via regras udev.</p>
       </description>
     </release>
   </releases>
+  
+  <content_rating type="oars-1.1" />
 </component>
