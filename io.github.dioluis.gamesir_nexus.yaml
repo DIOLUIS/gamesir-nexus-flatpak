@@ -2,26 +2,45 @@ app-id: io.github.dioluis.gamesir_nexus
 runtime: org.kde.Platform
 runtime-version: '6.6'
 sdk: org.kde.Sdk
-command: gamesir-nexus.py
-
+command: gamesir-nexus
 finish-args:
-  # Permissões Gráficas e de Janela
   - --share=ipc
   - --socket=fallback-x11
   - --socket=wayland
-  
-  # A permissão crítica de Hardware (Liberta a app do Sudo)
+  - --socket=x11
+  - --device=dri
   - --device=all
-
+  - --env=QT_QPA_PLATFORM=wayland;xcb
+  - --env=PYTHONPATH=/app/packages
 modules:
+  - name: python-deps
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
+    build-commands:
+      - pip3 install --target=/app/packages --no-cache-dir PySide6 evdev
+
   - name: gamesir-nexus
     buildsystem: simple
     build-commands:
-      # Instala o script principal
-      - install -D gamesir-nexus.py /app/bin/gamesir-nexus.py
-      - chmod +x /app/bin/gamesir-nexus.py
-      # Copia a imagem do sobre (se existir)
-      - cp diottec.jpeg /app/bin/diottec.jpeg || true
+      - install -D gamesir-nexus.py /app/bin/gamesir-nexus
+      - chmod +x /app/bin/gamesir-nexus
+      - install -D logo.jpeg /app/bin/logo.jpeg
+      - install -D chave.png /app/bin/chave.png
+      - install -D logo_resized.jpeg /app/share/icons/hicolor/128x128/apps/io.github.dioluis.gamesir_nexus.png
+      - install -D io.github.dioluis.gamesir_nexus.desktop /app/share/applications/io.github.dioluis.gamesir_nexus.desktop
+      - install -D io.github.dioluis.gamesir_nexus.metainfo.xml /app/share/metainfo/io.github.dioluis.gamesir_nexus.metainfo.xml
     sources:
-      - type: dir
-        path: .
+      - type: file
+        path: gamesir-nexus.py
+      - type: file
+        path: logo.jpeg
+      - type: file
+        path: logo_resized.jpeg
+      - type: file
+        path: chave.png
+      - type: file
+        path: io.github.dioluis.gamesir_nexus.desktop
+      - type: file
+        path: io.github.dioluis.gamesir_nexus.metainfo.xml
