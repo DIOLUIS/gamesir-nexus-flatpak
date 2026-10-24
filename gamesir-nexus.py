@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 import os, json, struct, sys, glob, traceback, zlib
 
-# Adiciona dinamicamente o caminho das bibliotecas instaladas pelo Flatpak
 for p in glob.glob('/app/lib/python3.*/site-packages'):
     sys.path.append(p)
 
@@ -55,7 +54,6 @@ class HardwareMonitor(QThread):
         while self.running:
             gui_needs_update = False
             
-            # 1. Reconexão Automática JS (Telemetria)
             if not self.fd:
                 paths = ['/dev/input/js0', '/dev/input/js1', '/dev/input/js2']
                 device_path = next((p for p in paths if os.path.exists(p)), None)
@@ -68,7 +66,6 @@ class HardwareMonitor(QThread):
                 else:
                     self.status_signal.emit("🔴 Desconectado", "#ef4444")
             
-            # 2. Reconexão Automática HIDRAW (M1/M2)
             if not self.hid_fd:
                 nodes = self.get_gamesir_nodes()
                 for node in nodes:
@@ -78,7 +75,6 @@ class HardwareMonitor(QThread):
                         break
                     except Exception: pass
 
-            # 3. Leitura HIDRAW com detecção de Hot-Unplug
             if self.hid_fd:
                 try:
                     hid_data = self.hid_fd.read(64)
@@ -93,7 +89,6 @@ class HardwareMonitor(QThread):
                     self.hid_fd = None
                 except Exception: pass
 
-            # 4. Leitura JS0 com detecção de Hot-Unplug
             if self.fd:
                 events_processed = 0
                 while events_processed < 64:
@@ -106,6 +101,13 @@ class HardwareMonitor(QThread):
                         if ev_type & 0x80: continue
                         
                         if ev_type == 1:
+                            # --- INTERCEÇÃO: LAYOUT SWITCH ---
+                            if self.controller.mappings.get("swap_ab_xy", False):
+                                if number == 0: number = 1
+                                elif number == 1: number = 0
+                                elif number == 2: number = 3
+                                elif number == 3: number = 2
+                            
                             self.btn_pressed_signal.emit(int(number), int(value))
                             
                         elif ev_type == 2:
@@ -117,6 +119,12 @@ class HardwareMonitor(QThread):
                                     self.last_pct[number] = pct; gui_needs_update = True
                             elif number in [2, 5]:
                                 pct = int(((value + 32767) / 65534) * 100)
+                                
+                                # --- INTERCEÇÃO: GATILHO ULTRASENSÍVEL ---
+                                if self.controller.mappings.get("hair_triggers", False):
+                                    if pct > 5:  # 5% de zona morta para evitar toques acidentais
+                                        pct = 100
+                                        
                                 if self.last_pct.get(number) != pct:
                                     self.last_pct[number] = pct; gui_needs_update = True
                     except OSError:
@@ -303,7 +311,6 @@ class MainWindow(QMainWindow):
 
         self.stack = QStackedWidget()
         
-        # --- DASHBOARD ---
         self.dashboard_wrapper = QWidget()
         dash_layout = QVBoxLayout(self.dashboard_wrapper)
         dash_layout.setContentsMargins(20, 20, 20, 20)
@@ -318,7 +325,6 @@ class MainWindow(QMainWindow):
         grid = QGridLayout()
         grid.setSpacing(15)
 
-        # COLUNA 1: Luzes e Vibração
         col1_layout = QVBoxLayout()
         card_luzes, lay_luzes = self.create_card("💡", "Luzes e Predefinições")
         led_grid = QGridLayout()
@@ -356,7 +362,6 @@ class MainWindow(QMainWindow):
         lay_vib.addWidget(btn_test)
         col1_layout.addWidget(card_vib)
 
-        # COLUNA 2: Analógicos e Teste de Botões
         card_sticks, lay_sticks = self.create_card("🕹️", "Sticks e Botões (Em Tempo Real)")
         lay_sticks.addWidget(QLabel("Analógico Esquerdo (L3)"))
         self.bar_lx = QProgressBar(); self.bar_lx.setRange(0, 100); self.bar_lx.setValue(50)
@@ -369,10 +374,7 @@ class MainWindow(QMainWindow):
         lay_sticks.addWidget(self.bar_rx); lay_sticks.addWidget(self.bar_ry)
         lay_sticks.addSpacing(25)
         
-        # NOVO: Visualizador de Botões (L1/R1 e Diamante ABXY)
         self.ui_buttons = {}
-        
-        # Bumper L1 e R1
         row_bumpers = QHBoxLayout()
         for b_id, txt in [(4, "L1"), (5, "R1")]:
             lbl = QLabel(txt)
@@ -383,28 +385,17 @@ class MainWindow(QMainWindow):
         lay_sticks.addLayout(row_bumpers)
         lay_sticks.addSpacing(10)
         
-        # Diamante ABXY (Y = topo, X = esq, B = dir, A = baixo)
         grid_face = QGridLayout()
         lbl_y = QLabel("Y"); lbl_y.setAlignment(Qt.AlignCenter); lbl_y.setStyleSheet("background-color: #2a2a32; color: #a1a1aa; border-radius: 18px; min-width: 36px; max-width: 36px; min-height: 36px; max-height: 36px; font-weight: bold;")
         lbl_x = QLabel("X"); lbl_x.setAlignment(Qt.AlignCenter); lbl_x.setStyleSheet("background-color: #2a2a32; color: #a1a1aa; border-radius: 18px; min-width: 36px; max-width: 36px; min-height: 36px; max-height: 36px; font-weight: bold;")
         lbl_b = QLabel("B"); lbl_b.setAlignment(Qt.AlignCenter); lbl_b.setStyleSheet("background-color: #2a2a32; color: #a1a1aa; border-radius: 18px; min-width: 36px; max-width: 36px; min-height: 36px; max-height: 36px; font-weight: bold;")
         lbl_a = QLabel("A"); lbl_a.setAlignment(Qt.AlignCenter); lbl_a.setStyleSheet("background-color: #2a2a32; color: #a1a1aa; border-radius: 18px; min-width: 36px; max-width: 36px; min-height: 36px; max-height: 36px; font-weight: bold;")
         
-        self.ui_buttons[3] = lbl_y
-        self.ui_buttons[2] = lbl_x
-        self.ui_buttons[1] = lbl_b
-        self.ui_buttons[0] = lbl_a
-        
-        grid_face.addWidget(lbl_y, 0, 1)
-        grid_face.addWidget(lbl_x, 1, 0)
-        grid_face.addWidget(lbl_b, 1, 2)
-        grid_face.addWidget(lbl_a, 2, 1)
-        grid_face.setAlignment(Qt.AlignCenter)
-        
+        self.ui_buttons[3] = lbl_y; self.ui_buttons[2] = lbl_x; self.ui_buttons[1] = lbl_b; self.ui_buttons[0] = lbl_a
+        grid_face.addWidget(lbl_y, 0, 1); grid_face.addWidget(lbl_x, 1, 0); grid_face.addWidget(lbl_b, 1, 2); grid_face.addWidget(lbl_a, 2, 1); grid_face.setAlignment(Qt.AlignCenter)
         lay_sticks.addLayout(grid_face)
         lay_sticks.addStretch()
 
-        # COLUNA 3: Gatilhos e Mapeamento
         col3_layout = QVBoxLayout()
         card_gatilhos, lay_gatilhos = self.create_card("📐", "Gatilhos")
         self.bar_l2 = QProgressBar(); self.bar_l2.setRange(0, 100); self.bar_l2.setValue(0)
@@ -437,8 +428,14 @@ class MainWindow(QMainWindow):
         lay_map.addWidget(self.combo_m2)
         lbl_m2.hide(); self.led_m2.hide(); btn_learn_m2.hide(); self.combo_m2.hide()
         
+        # --- CHECKBOXES VIVAS ---
         self.chk_hair = QCheckBox("Modo Gatilho Ultrasensível"); self.chk_hair.setChecked(self.controller.mappings.get("hair_triggers", False))
         self.chk_swap = QCheckBox("Alternar para layout Switch"); self.chk_swap.setChecked(self.controller.mappings.get("swap_ab_xy", False))
+        
+        # Conectando aos métodos que atualizam em tempo real
+        self.chk_hair.stateChanged.connect(self.update_software_mappings)
+        self.chk_swap.stateChanged.connect(self.update_software_mappings)
+        
         lay_map.addSpacing(10)
         lay_map.addWidget(self.chk_hair); lay_map.addWidget(self.chk_swap)
         col3_layout.addWidget(card_map)
@@ -460,7 +457,6 @@ class MainWindow(QMainWindow):
         
         self.stack.addWidget(self.dashboard_wrapper)
         
-        # --- SOBRE TELA ---
         self.about_wrapper = QWidget()
         about_layout = QVBoxLayout(self.about_wrapper)
         about_layout.setAlignment(Qt.AlignCenter)
@@ -492,6 +488,17 @@ class MainWindow(QMainWindow):
         self.hw_thread.m_btn_signal.connect(self.update_m_btn)
         self.hw_thread.btn_pressed_signal.connect(self.handle_button)
         self.hw_thread.start()
+
+    # --- NOVO MÉTODO PARA ATUALIZAR MAPAS EM TEMPO REAL ---
+    def update_software_mappings(self):
+        self.controller.mappings["hair_triggers"] = self.chk_hair.isChecked()
+        self.controller.mappings["swap_ab_xy"] = self.chk_swap.isChecked()
+        self.controller.save_profile() # Salva imediatamente no JSON
+        
+        status_msg = "Mapeamento atualizado: "
+        status_msg += "Gatilho Ultra ON | " if self.chk_hair.isChecked() else "Gatilho Normal | "
+        status_msg += "Layout Switch" if self.chk_swap.isChecked() else "Layout Xbox"
+        self.add_log(status_msg, True)
 
     def toggle_maximize(self):
         if self.isMaximized(): self.showNormal()
@@ -643,14 +650,13 @@ class MainWindow(QMainWindow):
         event.accept()
 
     def handle_button(self, number, value):
-        # NOVO: Atualiza a interface visual dos botões
         if hasattr(self, 'ui_buttons') and number in self.ui_buttons:
             lbl = self.ui_buttons[number]
-            if number in [0, 1, 2, 3]: # Botões ABXY (Redondos)
+            if number in [0, 1, 2, 3]: 
                 bg = "#ed4e4e" if value == 1 else "#2a2a32"
                 fg = "#ffffff" if value == 1 else "#a1a1aa"
                 lbl.setStyleSheet(f"background-color: {bg}; color: {fg}; border-radius: 18px; min-width: 36px; max-width: 36px; min-height: 36px; max-height: 36px; font-weight: bold;")
-            else: # L1 / R1 (Retangulares)
+            else: 
                 bg = "#ed4e4e" if value == 1 else "#2a2a32"
                 fg = "#ffffff" if value == 1 else "#a1a1aa"
                 lbl.setStyleSheet(f"background-color: {bg}; color: {fg}; border-radius: 6px; padding: 8px; font-weight: bold;")
