@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import os, json, struct, sys, glob, traceback, zlib, platform
+import threading, queue, time
 
 for p in glob.glob('/app/lib/python3.*/site-packages'):
     sys.path.append(p)
@@ -9,7 +10,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QLabel, QVBoxLayout,
                                QHBoxLayout, QTextEdit, QFormLayout, QComboBox, 
                                QCheckBox, QStackedWidget, QFrame, QGridLayout,
                                QColorDialog, QListWidget, QLineEdit)
-from PySide6.QtCore import Qt, QTimer, QPoint, QThread, Signal
+from PySide6.QtCore import Qt, QTimer, QPoint
 from PySide6.QtGui import QColor, QPixmap, QClipboard
 
 try:
@@ -18,20 +19,17 @@ try:
 except ImportError:
     EVDEV_AVAILABLE = False
 
-class HardwareMonitor(QThread):
-    log_signal = Signal(str, bool)
-    status_signal = Signal(str, str)
-    telemetry_signal = Signal(object)
-    m_btn_signal = Signal(str, bool)
-    btn_pressed_signal = Signal(object, object)
-    
-    def __init__(self, controller, parent=None):
-        super().__init__(parent)
+# Herança mudada para threading.Thread nativo do Python! Nada de PySide6 aqui.
+class HardwareMonitor(threading.Thread):
+    def __init__(self, controller, q):
+        super().__init__()
         self.controller = controller
+        self.q = q
         self.running = True
         self.fd = None
         self.hid_fd = None
         self.last_pct = {0: 50, 1: 50, 2: 0, 3: 50, 4: 50, 5: 0}
+        self.daemon = True
 
     def get_gamesir_nodes(self):
         import glob, os
@@ -47,7 +45,7 @@ class HardwareMonitor(QThread):
         return nodes
 
     def run(self):
-        import os, struct
+        import struct, fcntl
         fn_format = 'IhBB'
         event_size = struct.calcsize(fn_format)
         
@@ -60,18 +58,20 @@ class HardwareMonitor(QThread):
                 if device_path:
                     try:
                         self.fd = open(device_path, 'rb')
-                        os.set_blocking(self.fd.fileno(), False)
-                        self.status_signal.emit("🟢 Cyclone 2 (Ativo)", "#34d399")
+                        flags = fcntl.fcntl(self.fd.fileno(), fcntl.F_GETFL)
+                        fcntl.fcntl(self.fd.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
+                        self.q.put(('status', "🟢 Cyclone 2 (Ativo)", "#34d399"))
                     except Exception: pass
                 else:
-                    self.status_signal.emit("🔴 Desconectado", "#ef4444")
+                    self.q.put(('status', "🔴 Desconectado", "#ef4444"))
             
             if not self.hid_fd:
                 nodes = self.get_gamesir_nodes()
                 for node in nodes:
                     try:
                         self.hid_fd = open(node, 'rb')
-                        os.set_blocking(self.hid_fd.fileno(), False)
+                        flags = fcntl.fcntl(self.hid_fd.fileno(), fcntl.F_GETFL)
+                        fcntl.fcntl(self.hid_fd.fileno(), fcntl.F_SETFL, flags | os.O_NONBLOCK)
                         break
                     except Exception: pass
 
@@ -79,10 +79,10 @@ class HardwareMonitor(QThread):
                 try:
                     hid_data = self.hid_fd.read(64)
                     if hid_data and len(hid_data) > 6:
-                        m1_pressed = bool(hid_data[5] & 0x10) or bool(hid_data[6] & 0x01)
-                        m2_pressed = bool(hid_data[5] & 0x20) or bool(hid_data[6] & 0x02)
-                        self.m_btn_signal.emit('m1', m1_pressed)
-                        self.m_btn_signal.emit('m2', m2_pressed)
+                        m1_pressed = 1 if (hid_data[5] & 0x10) or (hid_data[6] & 0x01) else 0
+                        m2_pressed = 1 if (hid_data[5] & 0x20) or (hid_data[6] & 0x02) else 0
+                        self.q.put(('m_btn', 'm1', m1_pressed))
+                        self.q.put(('m_btn', 'm2', m2_pressed))
                 except OSError:
                     try: self.hid_fd.close()
                     except: pass
@@ -107,7 +107,7 @@ class HardwareMonitor(QThread):
                                 elif number == 2: number = 3
                                 elif number == 3: number = 2
                             
-                            self.btn_pressed_signal.emit(int(number), int(value))
+                            self.q.put(('btn', int(number), int(value)))
                             
                         elif ev_type == 2:
                             if number in [0, 1, 3, 4]:
@@ -127,19 +127,19 @@ class HardwareMonitor(QThread):
                         try: self.fd.close()
                         except: pass
                         self.fd = None
-                        self.status_signal.emit("🔴 Desconectado", "#ef4444")
+                        self.q.put(('status', "🔴 Desconectado", "#ef4444"))
                         break
                     except Exception: 
                         break
             
             if gui_needs_update:
-                self.telemetry_signal.emit(self.last_pct)
+                pct_str = f"{self.last_pct[0]},{self.last_pct[1]},{self.last_pct[2]},{self.last_pct[3]},{self.last_pct[4]},{self.last_pct[5]}"
+                self.q.put(('telemetry', pct_str))
                 
-            self.msleep(16)
+            time.sleep(0.016)
 
     def stop(self):
         self.running = False
-        self.wait()
 
 BUTTON_NAMES = {
     -1: "🚫 Nenhum / Desativado",
@@ -453,14 +453,16 @@ class MainWindow(QMainWindow):
         about_layout.setAlignment(Qt.AlignCenter)
         dev_title = QLabel("GameSir Connect - Linux Edition"); dev_title.setStyleSheet("font-size: 28px; font-weight: bold; color: #ffffff;"); dev_title.setAlignment(Qt.AlignCenter)
         dev_info = QLabel("Desenvolvido por: Diotec Software (Dionísio Luís)\nVersão: 0.9.6 Beta\n\nSoftware de Engenharia Reversa para Comandos GameSir no Linux."); dev_info.setAlignment(Qt.AlignCenter); dev_info.setStyleSheet("font-size: 16px; color: #a1a1aa; margin-top: 10px; margin-bottom: 20px;")
-        diotec_path = "/app/bin/diottec.jpeg" if os.path.exists("/app/bin/diottec.jpeg") else "diottec.jpeg"
+        
+        base_dir = os.path.dirname(os.path.abspath(__file__))
+        diotec_path = os.path.join(base_dir, "logo.jpeg") if os.path.exists(os.path.join(base_dir, "logo.jpeg")) else "/app/bin/logo.jpeg"
         diotec_lbl = QLabel()
         if os.path.exists(diotec_path):
             pixmap = QPixmap(diotec_path).scaled(300, 300, Qt.KeepAspectRatio, Qt.SmoothTransformation); diotec_lbl.setPixmap(pixmap)
         diotec_lbl.setAlignment(Qt.AlignCenter)
+        
         compat_info = QLabel("Compatibilidade Atual: GameSir Cyclone 2.\nO seu modelo funcionou ou encontrou algum erro?\nAjude-nos a adicionar suporte para novos comandos!"); compat_info.setAlignment(Qt.AlignCenter); compat_info.setStyleSheet("font-size: 14px; color: #34d399; margin-bottom: 10px; margin-top: 20px;")
         
-        # --- NOVO BOTÃO DE DIAGNÓSTICO ---
         btn_diag = QPushButton("🐞 Copiar Relatório de Diagnóstico para Email"); btn_diag.setStyleSheet("background-color: #3f3f46; color: white; padding: 10px; border-radius: 6px; font-weight: bold;"); btn_diag.setFixedWidth(450); btn_diag.clicked.connect(self.copy_diagnostics)
         
         donate_lbl = QLabel("Apoie o desenvolvimento contínuo (PIX):"); donate_lbl.setAlignment(Qt.AlignCenter); donate_lbl.setStyleSheet("font-weight: bold; color: #ffffff; margin-top: 15px;")
@@ -476,15 +478,29 @@ class MainWindow(QMainWindow):
         self.last_pct = {0: 50, 1: 50, 2: 0, 3: 50, 4: 50, 5: 0}
         self.fd = None; self.hid_fd = None; self.evdev_device = None; self.active_effect_id = None
         self.init_hardware()
-        self.hw_thread = HardwareMonitor(self.controller, self)
-        self.hw_thread.log_signal.connect(self.add_log)
-        self.hw_thread.status_signal.connect(self.update_status)
-        self.hw_thread.telemetry_signal.connect(self.update_telemetry)
-        self.hw_thread.m_btn_signal.connect(self.update_m_btn)
-        self.hw_thread.btn_pressed_signal.connect(self.handle_button)
+        
+        # --- A GRANDE MUDANÇA: FILA DE DADOS ---
+        self.q = queue.Queue()
+        self.hw_thread = HardwareMonitor(self.controller, self.q)
         self.hw_thread.start()
+        
+        # O Qt interage com a fila no ambiente seguro da Main Thread
+        self.queue_timer = QTimer(self)
+        self.queue_timer.timeout.connect(self.process_queue)
+        self.queue_timer.start(16)
 
-    # --- NOVA FUNÇÃO: EXTRAIR DADOS DE HARDWARE ---
+    def process_queue(self):
+        while not self.q.empty():
+            try:
+                msg = self.q.get_nowait()
+                if msg[0] == 'status': self.update_status(msg[1], msg[2])
+                elif msg[0] == 'telemetry': self.update_telemetry(msg[1])
+                elif msg[0] == 'm_btn': self.update_m_btn(msg[1], msg[2])
+                elif msg[0] == 'btn': self.handle_button(msg[1], msg[2])
+                elif msg[0] == 'log': self.add_log(msg[1], msg[2])
+            except Exception:
+                pass
+
     def copy_diagnostics(self):
         diag = "--- Relatorio de Diagnostico GameSir Connect ---\n"
         diag += f"Versao: 0.9.6 Beta\nSistema: {platform.system()} {platform.release()}\n\n"
@@ -506,7 +522,7 @@ class MainWindow(QMainWindow):
         diag += "Indique no email: O seu comando funcionou? Qual e o modelo exato?"
         
         QApplication.clipboard().setText(diag)
-        self.add_log("Relatório copiado! Cole no seu email e envie-nos o feedback.", True)
+        self.add_log("Relatório copiado! Cole no seu email e envie-nos o feedback.", 1)
 
     def update_software_mappings(self):
         self.controller.mappings["hair_triggers"] = self.chk_hair.isChecked()
@@ -515,7 +531,7 @@ class MainWindow(QMainWindow):
         status_msg = "Mapeamento atualizado: "
         status_msg += "Gatilho Ultra ON | " if self.chk_hair.isChecked() else "Gatilho Normal | "
         status_msg += "Layout Switch" if self.chk_swap.isChecked() else "Layout Xbox"
-        self.add_log(status_msg, True)
+        self.add_log(status_msg, 1)
 
     def toggle_maximize(self):
         if self.isMaximized(): self.showNormal()
@@ -524,13 +540,13 @@ class MainWindow(QMainWindow):
     def set_led_mode(self, mode):
         for btn in self.led_btns: btn.setChecked(btn.text() == mode)
         self.controller.led_mode = mode
-        self.add_log(f"Modo de LED selecionado: {mode} (Sólido requer escolha de cor)", True)
+        self.add_log(f"Modo de LED selecionado: {mode} (Sólido requer escolha de cor)", 1)
 
     def update_led_settings(self):
         self.controller.led_brightness = self.slider_brilho.value()
         self.controller.led_speed = self.slider_vel.value()
         self.send_controller_led(self.controller.led_r, self.controller.led_g, self.controller.led_b)
-        self.add_log(f"Brilho ajustado para {self.controller.led_brightness}%", True)
+        self.add_log(f"Brilho ajustado para {self.controller.led_brightness}%", 1)
 
     def open_color_picker(self):
         c = QColorDialog.getColor(QColor(self.controller.led_r, self.controller.led_g, self.controller.led_b), self, "Cor dos LEDs")
@@ -551,11 +567,11 @@ class MainWindow(QMainWindow):
 
     def copy_pix(self):
         QApplication.clipboard().setText("a6e35576-02ec-4f43-a243-3e65ee8e9c3d")
-        self.add_log("Chave PIX copiada para a área de transferência! Obrigado pelo apoio.", True)
+        self.add_log("Chave PIX copiada para a área de transferência! Obrigado pelo apoio.", 1)
 
-    def add_log(self, message, is_success=False):
+    def add_log(self, message, is_success=0):
         if hasattr(self, 'log_lbl'):
-            color = "#34d399" if is_success else "#a1a1aa"
+            color = "#34d399" if is_success == 1 else "#a1a1aa"
             self.log_lbl.setStyleSheet(f"color: {color}; font-family: monospace; font-weight: bold;")
             self.log_lbl.setText(f"> {message}")
 
@@ -607,11 +623,11 @@ class MainWindow(QMainWindow):
         hw_ok = self.send_hardware_mapping(self.combo_m1.currentData(), self.combo_m2.currentData())
         
         if json_ok and hw_ok:
-            self.add_log("Perfil gravado com sucesso no JSON e na EEPROM do Hardware!", True)
+            self.add_log("Perfil gravado com sucesso no JSON e na EEPROM do Hardware!", 1)
         elif json_ok:
-            self.add_log("Perfil gravado (JSON OK, mas sem resposta de Hardware EEPROM).", True)
+            self.add_log("Perfil gravado (JSON OK, mas sem resposta de Hardware EEPROM).", 1)
         else:
-            self.add_log("Erro ao gravar perfil.", False)
+            self.add_log("Erro ao gravar perfil.", 0)
 
     def send_controller_led(self, r, g, b, weak=0, strong=0, update_rumble=False):
         self.controller.led_r = r; self.controller.led_g = g; self.controller.led_b = b
@@ -642,7 +658,7 @@ class MainWindow(QMainWindow):
             except: pass
         self.send_controller_led(self.controller.led_r, self.controller.led_g, self.controller.led_b, weak=int(255*(self.slider_weak.value()/100)), strong=int(255*(self.slider_strong.value()/100)), update_rumble=True)
         QTimer.singleShot(1500, lambda: self.send_controller_led(self.controller.led_r, self.controller.led_g, self.controller.led_b, weak=0, strong=0, update_rumble=True))
-        self.add_log("Teste de vibração acionado.", True)
+        self.add_log("Teste de vibração acionado.", 1)
 
     def init_hardware(self):
         pass
@@ -651,18 +667,22 @@ class MainWindow(QMainWindow):
         self.conn_status.setText(text)
         self.conn_status.setStyleSheet(f"font-weight: bold; color: {color};")
 
-    def update_telemetry(self, data):
-        self.bar_lx.setValue(data.get(0, 50)); self.bar_ly.setValue(data.get(1, 50))
-        self.bar_rx.setValue(data.get(3, 50)); self.bar_ry.setValue(data.get(4, 50))
-        self.bar_l2.setValue(data.get(2, 0)); self.bar_r2.setValue(data.get(5, 0))
+    def update_telemetry(self, data_str):
+        try:
+            parts = data_str.split(',')
+            self.bar_lx.setValue(int(parts[0])); self.bar_ly.setValue(int(parts[1]))
+            self.bar_l2.setValue(int(parts[2]))
+            self.bar_rx.setValue(int(parts[3])); self.bar_ry.setValue(int(parts[4]))
+            self.bar_r2.setValue(int(parts[5]))
+        except: pass
 
     def update_m_btn(self, btn, state):
         led = self.led_m1 if btn == 'm1' else self.led_m2
-        if state: led.setText("🟢")
-        elif not state and led.text() == "🟢": led.setText("⚫")
+        if state == 1: led.setText("🟢")
+        elif state == 0 and led.text() == "🟢": led.setText("⚫")
 
     def closeEvent(self, event):
-        if hasattr(self, 'hw_thread') and self.hw_thread.isRunning():
+        if hasattr(self, 'hw_thread'):
             self.hw_thread.stop()
         event.accept()
 
@@ -693,7 +713,7 @@ class MainWindow(QMainWindow):
                     idx = self.combo_m2.findData(number)
                     if idx >= 0: self.combo_m2.setCurrentIndex(idx)
                 
-                self.add_log(f"✅ Sucesso: Botão {bname} atribuído à pá {self.learning_target.upper()}!", True)
+                self.add_log(f"✅ Sucesso: Botão {bname} atribuído à pá {self.learning_target.upper()}!", 1)
                 self.learning_target = None
 
 def main():
