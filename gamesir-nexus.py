@@ -24,6 +24,7 @@ class HardwareMonitor(QThread):
     status_signal = Signal(str, str)
     telemetry_signal = Signal(object)
     m_btn_signal = Signal(str, bool)
+    btn_pressed_signal = Signal(object, object)
     
     def __init__(self, controller, parent=None):
         super().__init__(parent)
@@ -54,6 +55,7 @@ class HardwareMonitor(QThread):
         while self.running:
             gui_needs_update = False
             
+            # 1. Reconexão Automática JS (Telemetria)
             if not self.fd:
                 paths = ['/dev/input/js0', '/dev/input/js1', '/dev/input/js2']
                 device_path = next((p for p in paths if os.path.exists(p)), None)
@@ -62,11 +64,11 @@ class HardwareMonitor(QThread):
                         self.fd = open(device_path, 'rb')
                         os.set_blocking(self.fd.fileno(), False)
                         self.status_signal.emit("🟢 Cyclone 2 (Ativo)", "#34d399")
-                        self.log_signal.emit("Comando reconhecido e sincronizado.", True)
                     except Exception: pass
                 else:
                     self.status_signal.emit("🔴 Desconectado", "#ef4444")
             
+            # 2. Reconexão Automática HIDRAW (M1/M2)
             if not self.hid_fd:
                 nodes = self.get_gamesir_nodes()
                 for node in nodes:
@@ -76,6 +78,7 @@ class HardwareMonitor(QThread):
                         break
                     except Exception: pass
 
+            # 3. Leitura HIDRAW com detecção de Hot-Unplug
             if self.hid_fd:
                 try:
                     hid_data = self.hid_fd.read(64)
@@ -84,8 +87,13 @@ class HardwareMonitor(QThread):
                         m2_pressed = bool(hid_data[5] & 0x20) or bool(hid_data[6] & 0x02)
                         self.m_btn_signal.emit('m1', m1_pressed)
                         self.m_btn_signal.emit('m2', m2_pressed)
-                except: pass
+                except OSError:
+                    try: self.hid_fd.close()
+                    except: pass
+                    self.hid_fd = None
+                except Exception: pass
 
+            # 4. Leitura JS0 com detecção de Hot-Unplug
             if self.fd:
                 events_processed = 0
                 while events_processed < 64:
@@ -96,7 +104,11 @@ class HardwareMonitor(QThread):
                         time_val, value, ev_type, number = struct.unpack(fn_format, event)
                         
                         if ev_type & 0x80: continue
-                        if ev_type == 2:
+                        
+                        if ev_type == 1:
+                            self.btn_pressed_signal.emit(int(number), int(value))
+                            
+                        elif ev_type == 2:
                             if number in [0, 1, 3, 4]:
                                 dz = self.controller.DEADZONE_L_X if number in [0, 1] else self.controller.DEADZONE_R_X
                                 f = self.controller.apply_deadzone(value, dz)
@@ -107,7 +119,14 @@ class HardwareMonitor(QThread):
                                 pct = int(((value + 32767) / 65534) * 100)
                                 if self.last_pct.get(number) != pct:
                                     self.last_pct[number] = pct; gui_needs_update = True
-                    except: break
+                    except OSError:
+                        try: self.fd.close()
+                        except: pass
+                        self.fd = None
+                        self.status_signal.emit("🔴 Desconectado", "#ef4444")
+                        break
+                    except Exception: 
+                        break
             
             if gui_needs_update:
                 self.telemetry_signal.emit(self.last_pct)
@@ -192,7 +211,6 @@ class GameSirCyclone2:
         if raw_value > 0: return int(((raw_value - deadzone) / (32767 - deadzone)) * 32767)
         else: return int(((raw_value + deadzone) / (32767 - deadzone)) * -32767)
 
-# --- CLASSE DA BARRA DE TÍTULO NATIVA (COMPATÍVEL COM WAYLAND/X11) ---
 class TitleBar(QFrame):
     def __init__(self, parent_window):
         super().__init__(parent_window)
@@ -202,7 +220,6 @@ class TitleBar(QFrame):
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
-            # Em vez de calcular posições, pedimos ao Sistema Operativo para mover a janela
             window_handle = self.parent_window.windowHandle()
             if window_handle:
                 window_handle.startSystemMove()
@@ -259,9 +276,7 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
         
-        # O cabeçalho usa a classe nativa agora
         self.header = TitleBar(self)
-        
         header_layout = QHBoxLayout(self.header)
         header_layout.setContentsMargins(0,0,0,0)
         
@@ -303,6 +318,7 @@ class MainWindow(QMainWindow):
         grid = QGridLayout()
         grid.setSpacing(15)
 
+        # COLUNA 1: Luzes e Vibração
         col1_layout = QVBoxLayout()
         card_luzes, lay_luzes = self.create_card("💡", "Luzes e Predefinições")
         led_grid = QGridLayout()
@@ -340,18 +356,55 @@ class MainWindow(QMainWindow):
         lay_vib.addWidget(btn_test)
         col1_layout.addWidget(card_vib)
 
-        card_sticks, lay_sticks = self.create_card("🕹️", "Sticks (Analógicos)")
+        # COLUNA 2: Analógicos e Teste de Botões
+        card_sticks, lay_sticks = self.create_card("🕹️", "Sticks e Botões (Em Tempo Real)")
         lay_sticks.addWidget(QLabel("Analógico Esquerdo (L3)"))
         self.bar_lx = QProgressBar(); self.bar_lx.setRange(0, 100); self.bar_lx.setValue(50)
         self.bar_ly = QProgressBar(); self.bar_ly.setRange(0, 100); self.bar_ly.setValue(50)
         lay_sticks.addWidget(self.bar_lx); lay_sticks.addWidget(self.bar_ly)
-        lay_sticks.addSpacing(20)
+        lay_sticks.addSpacing(15)
         lay_sticks.addWidget(QLabel("Analógico Direito (R3)"))
         self.bar_rx = QProgressBar(); self.bar_rx.setRange(0, 100); self.bar_rx.setValue(50)
         self.bar_ry = QProgressBar(); self.bar_ry.setRange(0, 100); self.bar_ry.setValue(50)
         lay_sticks.addWidget(self.bar_rx); lay_sticks.addWidget(self.bar_ry)
-        lay_sticks.addStretch()
+        lay_sticks.addSpacing(25)
         
+        # NOVO: Visualizador de Botões (L1/R1 e Diamante ABXY)
+        self.ui_buttons = {}
+        
+        # Bumper L1 e R1
+        row_bumpers = QHBoxLayout()
+        for b_id, txt in [(4, "L1"), (5, "R1")]:
+            lbl = QLabel(txt)
+            lbl.setAlignment(Qt.AlignCenter)
+            lbl.setStyleSheet("background-color: #2a2a32; color: #a1a1aa; border-radius: 6px; padding: 8px; font-weight: bold;")
+            self.ui_buttons[b_id] = lbl
+            row_bumpers.addWidget(lbl)
+        lay_sticks.addLayout(row_bumpers)
+        lay_sticks.addSpacing(10)
+        
+        # Diamante ABXY (Y = topo, X = esq, B = dir, A = baixo)
+        grid_face = QGridLayout()
+        lbl_y = QLabel("Y"); lbl_y.setAlignment(Qt.AlignCenter); lbl_y.setStyleSheet("background-color: #2a2a32; color: #a1a1aa; border-radius: 18px; min-width: 36px; max-width: 36px; min-height: 36px; max-height: 36px; font-weight: bold;")
+        lbl_x = QLabel("X"); lbl_x.setAlignment(Qt.AlignCenter); lbl_x.setStyleSheet("background-color: #2a2a32; color: #a1a1aa; border-radius: 18px; min-width: 36px; max-width: 36px; min-height: 36px; max-height: 36px; font-weight: bold;")
+        lbl_b = QLabel("B"); lbl_b.setAlignment(Qt.AlignCenter); lbl_b.setStyleSheet("background-color: #2a2a32; color: #a1a1aa; border-radius: 18px; min-width: 36px; max-width: 36px; min-height: 36px; max-height: 36px; font-weight: bold;")
+        lbl_a = QLabel("A"); lbl_a.setAlignment(Qt.AlignCenter); lbl_a.setStyleSheet("background-color: #2a2a32; color: #a1a1aa; border-radius: 18px; min-width: 36px; max-width: 36px; min-height: 36px; max-height: 36px; font-weight: bold;")
+        
+        self.ui_buttons[3] = lbl_y
+        self.ui_buttons[2] = lbl_x
+        self.ui_buttons[1] = lbl_b
+        self.ui_buttons[0] = lbl_a
+        
+        grid_face.addWidget(lbl_y, 0, 1)
+        grid_face.addWidget(lbl_x, 1, 0)
+        grid_face.addWidget(lbl_b, 1, 2)
+        grid_face.addWidget(lbl_a, 2, 1)
+        grid_face.setAlignment(Qt.AlignCenter)
+        
+        lay_sticks.addLayout(grid_face)
+        lay_sticks.addStretch()
+
+        # COLUNA 3: Gatilhos e Mapeamento
         col3_layout = QVBoxLayout()
         card_gatilhos, lay_gatilhos = self.create_card("📐", "Gatilhos")
         self.bar_l2 = QProgressBar(); self.bar_l2.setRange(0, 100); self.bar_l2.setValue(0)
@@ -360,29 +413,29 @@ class MainWindow(QMainWindow):
         lay_gatilhos.addWidget(QLabel("RT (Direito)")); lay_gatilhos.addWidget(self.bar_r2)
         col3_layout.addWidget(card_gatilhos)
         
-        card_map, lay_map = self.create_card("⚙️", "Botões Traseiros e Atalhos")
+        card_map, lay_map = self.create_card("⚙️", "Atalhos (Software)")
         lbl_m1 = QLabel("M1 (Esq)"); self.led_m1 = QLabel("⚫")
         btn_learn_m1 = QPushButton("🎯"); btn_learn_m1.setToolTip("Capturar Botão"); btn_learn_m1.clicked.connect(lambda: self.start_learning('m1'))
         row_m1 = QHBoxLayout(); row_m1.addWidget(lbl_m1); row_m1.addWidget(self.led_m1); row_m1.addStretch(); row_m1.addWidget(btn_learn_m1)
         lay_map.addLayout(row_m1)
-        
         self.combo_m1 = QComboBox()
         for bid, bname in BUTTON_NAMES.items(): self.combo_m1.addItem(bname, bid)
         idx_m1 = self.combo_m1.findData(self.controller.mappings.get("m1_button_id", 2))
         if idx_m1 >= 0: self.combo_m1.setCurrentIndex(idx_m1)
         lay_map.addWidget(self.combo_m1)
         lay_map.addSpacing(10)
+        lbl_m1.hide(); self.led_m1.hide(); btn_learn_m1.hide(); self.combo_m1.hide()
 
         lbl_m2 = QLabel("M2 (Dir)"); self.led_m2 = QLabel("⚫")
         btn_learn_m2 = QPushButton("🎯"); btn_learn_m2.setToolTip("Capturar Botão"); btn_learn_m2.clicked.connect(lambda: self.start_learning('m2'))
         row_m2 = QHBoxLayout(); row_m2.addWidget(lbl_m2); row_m2.addWidget(self.led_m2); row_m2.addStretch(); row_m2.addWidget(btn_learn_m2)
         lay_map.addLayout(row_m2)
-        
         self.combo_m2 = QComboBox()
         for bid, bname in BUTTON_NAMES.items(): self.combo_m2.addItem(bname, bid)
         idx_m2 = self.combo_m2.findData(self.controller.mappings.get("m2_button_id", 1))
         if idx_m2 >= 0: self.combo_m2.setCurrentIndex(idx_m2)
         lay_map.addWidget(self.combo_m2)
+        lbl_m2.hide(); self.led_m2.hide(); btn_learn_m2.hide(); self.combo_m2.hide()
         
         self.chk_hair = QCheckBox("Modo Gatilho Ultrasensível"); self.chk_hair.setChecked(self.controller.mappings.get("hair_triggers", False))
         self.chk_swap = QCheckBox("Alternar para layout Switch"); self.chk_swap.setChecked(self.controller.mappings.get("swap_ab_xy", False))
@@ -401,6 +454,7 @@ class MainWindow(QMainWindow):
         btn_save.setObjectName("btn_accent")
         btn_save.setFixedWidth(300)
         btn_save.clicked.connect(self.save_all)
+        btn_save.hide() 
         bottom_bar.addWidget(self.log_lbl); bottom_bar.addStretch(); bottom_bar.addWidget(btn_save)
         dash_layout.addLayout(bottom_bar)
         
@@ -410,44 +464,19 @@ class MainWindow(QMainWindow):
         self.about_wrapper = QWidget()
         about_layout = QVBoxLayout(self.about_wrapper)
         about_layout.setAlignment(Qt.AlignCenter)
-        
-        dev_title = QLabel("GameSir Connect - Linux Edition")
-        dev_title.setStyleSheet("font-size: 28px; font-weight: bold; color: #ffffff;")
-        dev_title.setAlignment(Qt.AlignCenter)
-        
-        dev_info = QLabel("Desenvolvido por: Diotec Software (Dionísio Luís)\nVersão: 0.9.6 Beta\n\nSoftware de Engenharia Reversa para Comandos GameSir no Linux.")
-        dev_info.setAlignment(Qt.AlignCenter)
-        dev_info.setStyleSheet("font-size: 16px; color: #a1a1aa; margin-top: 10px; margin-bottom: 20px;")
-        
+        dev_title = QLabel("GameSir Connect - Linux Edition"); dev_title.setStyleSheet("font-size: 28px; font-weight: bold; color: #ffffff;"); dev_title.setAlignment(Qt.AlignCenter)
+        dev_info = QLabel("Desenvolvido por: Diotec Software (Dionísio Luís)\nVersão: 0.9.6 Beta\n\nSoftware de Engenharia Reversa para Comandos GameSir no Linux."); dev_info.setAlignment(Qt.AlignCenter); dev_info.setStyleSheet("font-size: 16px; color: #a1a1aa; margin-top: 10px; margin-bottom: 20px;")
         diotec_path = "/app/bin/diottec.jpeg" if os.path.exists("/app/bin/diottec.jpeg") else "diottec.jpeg"
         diotec_lbl = QLabel()
         if os.path.exists(diotec_path):
-            pixmap = QPixmap(diotec_path).scaled(300, 300, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-            diotec_lbl.setPixmap(pixmap)
+            pixmap = QPixmap(diotec_path).scaled(300, 300, Qt.KeepAspectRatio, Qt.SmoothTransformation); diotec_lbl.setPixmap(pixmap)
         diotec_lbl.setAlignment(Qt.AlignCenter)
+        compat_info = QLabel("Compatibilidade Atual: GameSir Cyclone 2.\nO seu modelo funcionou? Encontrou algum bug?\nRelate em: diotec.soft@gmail.com"); compat_info.setAlignment(Qt.AlignCenter); compat_info.setStyleSheet("font-size: 14px; color: #34d399; margin-bottom: 20px; margin-top: 20px;")
+        donate_lbl = QLabel("Apoie o desenvolvimento contínuo deste projeto (PIX):"); donate_lbl.setAlignment(Qt.AlignCenter); donate_lbl.setStyleSheet("font-weight: bold; color: #ffffff;")
+        btn_donate = QPushButton("📋 Copiar Chave PIX (a6e35576-02ec-4f43-a243-3e65ee8e9c3d)"); btn_donate.setObjectName("btn_accent"); btn_donate.setFixedWidth(450); btn_donate.clicked.connect(self.copy_pix)
         
-        compat_info = QLabel("Compatibilidade Atual: GameSir Cyclone 2.\nO seu modelo funcionou? Encontrou algum bug?\nRelate em: diotec.soft@gmail.com")
-        compat_info.setAlignment(Qt.AlignCenter)
-        compat_info.setStyleSheet("font-size: 14px; color: #34d399; margin-bottom: 20px; margin-top: 20px;")
-        
-        donate_lbl = QLabel("Apoie o desenvolvimento contínuo deste projeto (PIX):")
-        donate_lbl.setAlignment(Qt.AlignCenter)
-        donate_lbl.setStyleSheet("font-weight: bold; color: #ffffff;")
-        
-        btn_donate = QPushButton("📋 Copiar Chave PIX (a6e35576-02ec-4f43-a243-3e65ee8e9c3d)")
-        btn_donate.setObjectName("btn_accent")
-        btn_donate.setFixedWidth(450)
-        btn_donate.clicked.connect(self.copy_pix)
-        
-        about_layout.addWidget(dev_title)
-        about_layout.addWidget(dev_info)
-        about_layout.addWidget(diotec_lbl)
-        about_layout.addWidget(compat_info)
-        about_layout.addWidget(donate_lbl)
-        about_layout.addWidget(btn_donate, alignment=Qt.AlignCenter)
-        
+        about_layout.addWidget(dev_title); about_layout.addWidget(dev_info); about_layout.addWidget(diotec_lbl); about_layout.addWidget(compat_info); about_layout.addWidget(donate_lbl); about_layout.addWidget(btn_donate, alignment=Qt.AlignCenter)
         self.stack.addWidget(self.about_wrapper)
-
         self.sidebar.currentRowChanged.connect(self.stack.setCurrentIndex)
         content_layout.addWidget(self.stack)
         main_layout.addLayout(content_layout)
@@ -461,6 +490,7 @@ class MainWindow(QMainWindow):
         self.hw_thread.status_signal.connect(self.update_status)
         self.hw_thread.telemetry_signal.connect(self.update_telemetry)
         self.hw_thread.m_btn_signal.connect(self.update_m_btn)
+        self.hw_thread.btn_pressed_signal.connect(self.handle_button)
         self.hw_thread.start()
 
     def toggle_maximize(self):
@@ -561,13 +591,8 @@ class MainWindow(QMainWindow):
 
     def send_controller_led(self, r, g, b, weak=0, strong=0, update_rumble=False):
         self.controller.led_r = r; self.controller.led_g = g; self.controller.led_b = b
-        
-        # Aplica o brilho matematicamente (Software Dimming)
         pct = self.slider_brilho.value() / 100.0
-        r_dim = int(r * pct)
-        g_dim = int(g * pct)
-        b_dim = int(b * pct)
-
+        r_dim = int(r * pct); g_dim = int(g * pct); b_dim = int(b * pct)
         targets = self.get_gamesir_nodes()
         if not targets: return
         report = bytearray(64)
@@ -596,158 +621,7 @@ class MainWindow(QMainWindow):
         self.add_log("Teste de vibração acionado.", True)
 
     def init_hardware(self):
-        return
-        self.poll_hardware()
-
-    def poll_hardware(self):
-        return
-        # 1. Conexão Evdev / JS0
-        if not self.fd:
-            paths = ['/dev/input/js0', '/dev/input/js1', '/dev/input/js2']
-            device_path = next((p for p in paths if os.path.exists(p)), None)
-            if device_path:
-                try:
-                    self.fd = open(device_path, 'rb')
-                    os.set_blocking(self.fd.fileno(), False)
-                    self.conn_status.setText("🟢 Cyclone 2 (Ativo)")
-                    self.conn_status.setStyleSheet("font-weight: bold; color: #34d399;")
-                    self.add_log("Comando reconhecido e sincronizado.", True)
-                    self.send_controller_led(self.controller.led_r, self.controller.led_g, self.controller.led_b)
-                    
-                    if EVDEV_AVAILABLE:
-                        for dname in list_devices():
-                            dev = InputDevice(dname)
-                            if 'wireless controller' in dev.name.lower() or 'gamesir' in dev.name.lower():
-                                if ecodes.EV_FF in dev.capabilities(): self.evdev_device = dev; break
-                except Exception: pass
-            else:
-                if self.conn_status.text() != "🔴 Desconectado":
-                    self.conn_status.setText("🔴 Desconectado")
-                    self.conn_status.setStyleSheet("font-weight: bold; color: #ef4444;")
-                return
-
-        # 2. Conexão HIDRAW (M1/M2 nativos)
-        if not self.hid_fd:
-            nodes = self.get_gamesir_nodes()
-            for node in nodes:
-                try:
-                    self.hid_fd = open(node, 'rb')
-                    os.set_blocking(self.hid_fd.fileno(), False)
-                    break
-                except Exception: pass
-
-        # Processar HIDRAW (Nativo)
-        if self.hid_fd:
-            try:
-                hid_data = self.hid_fd.read(64)
-                if hid_data == b'':
-                    raise OSError("HID Desconectado")
-                if hid_data and len(hid_data) > 6:
-                    b5 = hid_data[5]
-                    b6 = hid_data[6]
-                    m1_pressed = bool(b5 & 0x10) or bool(b6 & 0x01)
-                    m2_pressed = bool(b5 & 0x20) or bool(b6 & 0x02)
-                    
-                    if m1_pressed: 
-                        self.led_m1.setText("🟢")
-                        self.add_log("M1 acionado (Modo Físico)!", True)
-                    elif not m1_pressed and self.led_m1.text() == "🟢":
-                        self.led_m1.setText("⚫")
-                        
-                    if m2_pressed: 
-                        self.led_m2.setText("🟢")
-                        self.add_log("M2 acionado (Modo Físico)!", True)
-                    elif not m2_pressed and self.led_m2.text() == "🟢":
-                        self.led_m2.setText("⚫")
-            except (BlockingIOError, struct.error):
-                pass
-            except OSError:
-                if self.hid_fd: self.hid_fd.close()
-                self.hid_fd = None
-
-        # Processar JS0 (Tradicional) com Proteção contra Event Flooding
-        fn_format = 'IhBB'
-        event_size = struct.calcsize(fn_format)
-        gui_needs_update = False
-        events_processed = 0
-        MAX_EVENTS_PER_TICK = 64 # Limite absoluto para evitar que o QTimer reentre e crash
-        
-        try:
-            while events_processed < MAX_EVENTS_PER_TICK:
-                try:
-                    if not self.fd:
-                        break
-                    event = self.fd.read(event_size)
-                except BlockingIOError:
-                    break 
-                except TypeError:
-                    break
-                
-                if event == b'':
-                    raise OSError("Cabo Desconectado")
-                if event is None or len(event) < event_size:
-                    break
-                
-                events_processed += 1
-                
-                try:
-                    time_val, value, ev_type, number = struct.unpack(fn_format, event)
-                except struct.error:
-                    continue # Ignora pacotes corrompidos durante o stress
-                
-                if ev_type & 0x80: continue
-                
-                if ev_type == 2:
-                    if number in [0, 1, 3, 4]:
-                        dz = self.controller.DEADZONE_L_X if number in [0, 1] else self.controller.DEADZONE_R_X
-                        f = self.controller.apply_deadzone(value, dz)
-                        pct = int(((f + 32767) / 65534) * 100)
-                        if self.last_pct[number] != pct:
-                            self.last_pct[number] = pct; gui_needs_update = True
-                    elif number in [2, 5]:
-                        pct = int(((value + 32767) / 65534) * 100)
-                        if self.last_pct[number] != pct:
-                            self.last_pct[number] = pct; gui_needs_update = True
-                            
-                elif ev_type == 1:
-                    is_trigger_click = (number > 300)
-                    if not is_trigger_click or self.learning_target:
-                        bname = BUTTON_NAMES.get(number, f"B{number}")
-                        st = "Pressionado" if value == 1 else "Solto"
-                        self.add_log(f"Input: {bname} -> {st}")
-
-                    if self.learning_target and value == 1:
-                        if number not in BUTTON_NAMES:
-                            BUTTON_NAMES[number] = f"B{number}"
-                            self.combo_m1.addItem(BUTTON_NAMES[number], number)
-                            self.combo_m2.addItem(BUTTON_NAMES[number], number)
-
-                        if self.learning_target == 'm1':
-                            self.controller.mappings["m1_button_id"] = number
-                            idx = self.combo_m1.findData(number)
-                            if idx >= 0: self.combo_m1.setCurrentIndex(idx)
-                        elif self.learning_target == 'm2':
-                            self.controller.mappings["m2_button_id"] = number
-                            idx = self.combo_m2.findData(number)
-                            if idx >= 0: self.combo_m2.setCurrentIndex(idx)
-                        
-                        self.learning_target = None
-                        self.add_log("Botão capturado com sucesso!", True)
-
-        except OSError:
-            if self.fd: 
-                try: self.fd.close()
-                except: pass
-            self.fd = None
-            self.conn_status.setText("🔴 Desconectado")
-            self.conn_status.setStyleSheet("font-weight: bold; color: #ef4444;")
-            self.add_log("Aguardando conexão do comando...")
-            
-        if gui_needs_update:
-            self.bar_lx.setValue(self.last_pct.get(0, 50)); self.bar_ly.setValue(self.last_pct.get(1, 50))
-            self.bar_rx.setValue(self.last_pct.get(3, 50)); self.bar_ry.setValue(self.last_pct.get(4, 50))
-            self.bar_l2.setValue(self.last_pct.get(2, 0)); self.bar_r2.setValue(self.last_pct.get(5, 0))
-
+        pass
 
     def update_status(self, text, color):
         self.conn_status.setText(text)
@@ -760,20 +634,47 @@ class MainWindow(QMainWindow):
 
     def update_m_btn(self, btn, state):
         led = self.led_m1 if btn == 'm1' else self.led_m2
-        if state:
-            led.setText("🟢")
-        elif not state and led.text() == "🟢":
-            led.setText("⚫")
-
+        if state: led.setText("🟢")
+        elif not state and led.text() == "🟢": led.setText("⚫")
 
     def closeEvent(self, event):
         if hasattr(self, 'hw_thread') and self.hw_thread.isRunning():
             self.hw_thread.stop()
         event.accept()
 
+    def handle_button(self, number, value):
+        # NOVO: Atualiza a interface visual dos botões
+        if hasattr(self, 'ui_buttons') and number in self.ui_buttons:
+            lbl = self.ui_buttons[number]
+            if number in [0, 1, 2, 3]: # Botões ABXY (Redondos)
+                bg = "#ed4e4e" if value == 1 else "#2a2a32"
+                fg = "#ffffff" if value == 1 else "#a1a1aa"
+                lbl.setStyleSheet(f"background-color: {bg}; color: {fg}; border-radius: 18px; min-width: 36px; max-width: 36px; min-height: 36px; max-height: 36px; font-weight: bold;")
+            else: # L1 / R1 (Retangulares)
+                bg = "#ed4e4e" if value == 1 else "#2a2a32"
+                fg = "#ffffff" if value == 1 else "#a1a1aa"
+                lbl.setStyleSheet(f"background-color: {bg}; color: {fg}; border-radius: 6px; padding: 8px; font-weight: bold;")
+                
+        if value == 1: 
+            bname = BUTTON_NAMES.get(number, f"B{number}")
+            if getattr(self, 'learning_target', None):
+                if number not in BUTTON_NAMES:
+                    BUTTON_NAMES[number] = f"B{number}"
+                    self.combo_m1.addItem(bname, number)
+                    self.combo_m2.addItem(bname, number)
+                
+                if self.learning_target == 'm1':
+                    idx = self.combo_m1.findData(number)
+                    if idx >= 0: self.combo_m1.setCurrentIndex(idx)
+                elif self.learning_target == 'm2':
+                    idx = self.combo_m2.findData(number)
+                    if idx >= 0: self.combo_m2.setCurrentIndex(idx)
+                
+                self.add_log(f"✅ Sucesso: Botão {bname} atribuído à pá {self.learning_target.upper()}!", True)
+                self.learning_target = None
+
 def main():
     import signal
-    # Permite que o Ctrl+C encerre a aplicação sem gerar o Traceback do KeyboardInterrupt
     signal.signal(signal.SIGINT, signal.SIG_DFL)
     app = QApplication(sys.argv)
     window = MainWindow(GameSirCyclone2())
